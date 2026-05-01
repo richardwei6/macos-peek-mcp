@@ -1,0 +1,48 @@
+# Default denylist for macos-peek-mcp.
+#
+# On first run this file is copied to ~/.config/peek-mcp/denylist.toml
+# (or ~/Library/Application Support/peek-mcp/denylist.toml if XDG_CONFIG_HOME
+# is unset). Edit the user copy directly to add or remove entries; the
+# default in the package is the seed only.
+#
+# `bundle_ids` matches exactly. `app_name_patterns` matches case-insensitively
+# as a substring against the AX/CGWindow `kCGWindowOwnerName` value (typically
+# the app name visible in the menu bar).
+#
+# See `read_window(allow_sensitive=True)` to override per-call when you
+# explicitly want to read a denylisted app's window.
+
+bundle_ids = [
+    # Password managers
+    "com.1password.1password",
+    "com.1password.1password7",
+    "com.apple.keychainaccess",
+
+    # Native messaging / mail
+    "com.apple.mail",
+    "com.apple.MobileSMS",
+
+    # Personal notes
+    "com.apple.Notes",
+]
+
+# Substring (case-insensitive) match against the app's display name. Used as
+# fallback when a process has no resolvable bundle ID, and to catch banking
+# apps whose bundle IDs are vendor-specific.
+app_name_patterns = [
+    "1Password",
+    "Keychain Access",
+    "Mail",
+    "Messages",
+    "Notes",
+    # Common banking app naming patterns
+    "Bank",
+    "Chase",
+    "Wells Fargo",
+    "Capital One",
+    "Schwab",
+    "Fidelity",
+    "Vanguard",
+    "Robinhood",
+    "Coinbase",
+]

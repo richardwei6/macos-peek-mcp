@@ -1,0 +1,56 @@
+[project]
+name = "macos-peek-mcp"
+version = "0.1.0"
+description = "Local stdio MCP server exposing macOS window text via the Accessibility API"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Richard Wei" }]
+keywords = ["mcp", "macos", "accessibility", "ax", "claude"]
+classifiers = [
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "pyobjc-framework-Quartz>=10.0",
+    "pyobjc-framework-ApplicationServices>=10.0",
+    "pyobjc-framework-Cocoa>=10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+peek-mcp = "peek.server:main"
+peek = "peek.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/peek"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/peek/data/default-denylist.toml" = "peek/data/default-denylist.toml"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "integration: tests that require real macOS AX trust; skipped by default",
+]
+addopts = "-m 'not integration'"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
