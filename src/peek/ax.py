@@ -307,7 +307,13 @@ def _walk(element: Any, *, depth: int, budget: _WalkBudget, seen_text: set[int])
     for idx, child in enumerate(children_list):
         try:
             pos_attrs = copy_multiple_attribute_values(child, (AX_POSITION,))
-        except Exception:
+        except Exception as exc:
+            # Surface the failure but don't drop the child; we'll still try
+            # to walk it (recurse will catch the next attribute_values raise
+            # and skip cleanly).
+            msg = f"position_read_failed: {type(exc).__name__}: {exc}"
+            logger.debug(msg)
+            budget.errors.append(msg)
             pos_attrs = {}
         decorated.append((_position_key(child, pos_attrs), idx, child))
     decorated.sort(key=lambda t: (t[0], t[1]))
