@@ -25,9 +25,20 @@ The `contains` selector is the killer feature: the server walks every visible no
 
 All returned text is wrapped in `<window_text source="..." trust="untrusted">…</window_text>` so the model can tell window contents apart from your authoritative instructions. See [Threat model](#threat-model).
 
-## Quick start
+## Prerequisites
 
-Requires macOS 13+, [`uv`](https://docs.astral.sh/uv/), and the Apple command line tools (for `git` and `codesign`).
+- macOS 13+ with Xcode installed
+- [`uv`](https://docs.astral.sh/uv/) on your `$PATH`
+- A free Apple ID (no paid Apple Developer Program membership required)
+- An Apple Development codesigning identity in your keychain. To create one:
+  1. Open Xcode
+  2. Xcode → Settings → Accounts → click **+** → Apple ID
+  3. Sign in with your Apple ID
+  4. Select your team → **Manage Certificates** → **+** → **Apple Development**
+
+The installer aborts with this checklist if the codesigning identity is missing. The bundle has to be signed with a real Team Identifier (not ad-hoc) — macOS Sonoma 14.4+ / Sequoia silently denies AX trust to ad-hoc-signed bundles regardless of bundle layout, so a local Apple Development certificate is the actual fix.
+
+## Quick start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/richardwei6/macos-peek-mcp/main/install.sh | bash
@@ -35,7 +46,7 @@ curl -fsSL https://raw.githubusercontent.com/richardwei6/macos-peek-mcp/main/ins
 
 You'll see one `sudo` prompt — writing to `/Applications/` requires it. The bundle lives there (not under `~/Applications/`) so it shows up in the default *System Settings → Privacy & Security → Accessibility* file picker, which opens to `/Applications/`.
 
-The installer clones the repo to `~/.local/share/macos-peek-mcp/src`, builds the `Peek.app` bundle with PyInstaller in `--onedir` mode (~1–2 min on first run), ad-hoc-codesigns it, installs the bundle to `/Applications/Peek.app`, and creates a CLI symlink at `~/.local/bin/peek-mcp` that resolves to the bundle's binary. Re-running updates the source and rebuilds.
+The installer clones the repo to `~/.local/share/macos-peek-mcp/src`, builds the `Peek.app` bundle with PyInstaller in `--onedir` mode (~1–2 min on first run), codesigns it with the first `Apple Development:` identity in your keychain (override with `PEEK_CODESIGN_IDENTITY=...`), installs the bundle to `/Applications/Peek.app`, and creates a CLI symlink at `~/.local/bin/peek-mcp` that resolves to the bundle's binary. Re-running updates the source and rebuilds.
 
 The installer also adds a `peek` entry to `~/.claude.json` automatically — opt out with `--skip-claude-config` if you manage your MCP config yourself.
 
@@ -52,7 +63,7 @@ Or do it by hand:
 ```bash
 git clone https://github.com/richardwei6/macos-peek-mcp.git
 cd macos-peek-mcp
-./build.sh                                              # build + ad-hoc-sign dist/Peek.app
+./build.sh                                              # build + codesign dist/Peek.app
 sudo ./dist/Peek.app/Contents/MacOS/peek-mcp install    # install Peek.app to /Applications + ~/.local/bin/peek-mcp symlink
 ```
 
@@ -131,7 +142,7 @@ Claude Code  ──stdio JSON-RPC──▶  ~/.local/bin/peek-mcp  (symlink)
 
 Every blocking AX call runs on a bounded `ThreadPoolExecutor` so concurrent MCP requests don't stall on each other. Per-window deadline (default 3s) is enforced via `asyncio.wait_for`; on timeout, the call returns partial results with `truncated_at_time_limit=True`.
 
-The binary is built with PyInstaller (`--onedir`) and wrapped in a `Peek.app` bundle ad-hoc-codesigned with bundle ID `com.richardwei6.macos-peek-mcp`. AX trust attaches at the kernel cdhash + bundle ID level — no Python interpreter is exposed to TCC, and the `.app` form is what the modern macOS Accessibility pane natively recognizes. `--onedir` (not `--onefile`) is intentional: the running binary is `/Applications/Peek.app/Contents/MacOS/peek-mcp` directly, with no `/var/folders/.../_MEIxxxxx/` self-extraction step that would break TCC's bundle-context match on Sonoma 14.4+ and Sequoia.
+The binary is built with PyInstaller (`--onedir`) and wrapped in a `Peek.app` bundle codesigned with the user's local Apple Development identity (hardened runtime + entitlements that authorize PyInstaller's library loading), bundle ID `com.richardwei6.macos-peek-mcp`. AX trust attaches at the kernel cdhash + Team Identifier level — no Python interpreter is exposed to TCC, and the `.app` form is what the modern macOS Accessibility pane natively recognizes. `--onedir` (not `--onefile`) is intentional: the running binary is `/Applications/Peek.app/Contents/MacOS/peek-mcp` directly, with no `/var/folders/.../_MEIxxxxx/` self-extraction step that would break TCC's bundle-context match on Sonoma 14.4+ and Sequoia.
 
 ## Threat model
 
@@ -139,11 +150,13 @@ This tool reads text from your windows and pipes it into an LLM. Three risks wor
 
 ### AX trust scope
 
-AX trust is granted to the **`Peek.app` bundle at `/Applications/Peek.app`** — specifically the kernel records the bundle's cdhash plus the bundle identifier (`com.richardwei6.macos-peek-mcp`). The grant authorizes that exact artifact. A different process running under your user, even a Python interpreter, gets nothing from this grant.
+AX trust is granted to the **`Peek.app` bundle at `/Applications/Peek.app`** — specifically the kernel records the bundle's cdhash plus the Team Identifier from the Apple Development certificate the bundle is signed with. The bundle identifier (`com.richardwei6.macos-peek-mcp`) is the human-facing label; the kernel's match is on `(team-id, cdhash)`. The grant authorizes that exact artifact. A different process running under your user, even a Python interpreter, gets nothing from this grant.
+
+The bundle is signed locally with your Apple Development certificate (hardened runtime + entitlements for PyInstaller's library loading) — *not* ad-hoc. TCC on Sonoma 14.4+ and Sequoia enforces the Team Identifier strictly, which is why the local-Apple-Developer-certificate signing is the load-bearing piece, not just the `--onedir` bundle layout.
 
 The CLI symlink at `~/.local/bin/peek-mcp` resolves to `Peek.app/Contents/MacOS/peek-mcp` — the kernel resolves any execution of the symlink (or of the binary directly) to the bundle context, so trust applies regardless of which path your MCP client invokes.
 
-Rebuilding the bundle (and reinstalling) produces a new cdhash. TCC will revoke the prior grant and require a fresh one. That is correct: trust should not survive artifact replacement.
+Rebuilding the bundle (and reinstalling) produces a new cdhash. TCC will revoke the prior grant and require a fresh one. That is correct: trust should not survive artifact replacement. The Team Identifier alone isn't enough — TCC matches on the `(team-id, cdhash)` pair, so a code change that changes the cdhash still triggers re-grant even though the team is stable.
 
 ### Prompt injection
 
@@ -241,7 +254,7 @@ uv sync --group dev
 uv run pytest tests/                  # unit tests (62, no AX needed)
 uv run pytest tests/ -m integration   # AX-required (local only)
 
-./build.sh                                              # build + ad-hoc sign dist/Peek.app
+./build.sh                                              # build + codesign dist/Peek.app
 sudo ./dist/Peek.app/Contents/MacOS/peek-mcp install    # install Peek.app + ~/.local/bin/peek-mcp symlink
 ```
 
