@@ -3,12 +3,13 @@
 Two responsibilities:
 
 1. Wrap the small set of pyobjc calls that report whether the running
-   interpreter has been granted Accessibility trust, and open the right
+   binary has been granted Accessibility trust, and open the right
    System Settings pane on first failure.
 2. Persist the path + sha256 of the binary the user granted trust to (the
-   "shim" written by `peek install-shim`). On every subsequent call, diff
-   against the persisted record so we can warn when uv re-signs the
-   interpreter and AX trust silently drops.
+   PyInstaller-built `peek-mcp` binary copied to `~/.local/bin/peek-mcp`
+   by `peek install`). On every subsequent call, diff against the
+   persisted record so we can warn when the binary at the install path
+   has been replaced (e.g., a rebuild) and AX trust must be re-granted.
 
 State persists at:
     $XDG_CONFIG_HOME/peek-mcp/state.json
@@ -36,12 +37,12 @@ logger = logging.getLogger(__name__)
 CONFIG_DIRNAME = "peek-mcp"
 STATE_FILENAME = "state.json"
 
-# AX trust is granted to this shim path. `peek install-shim` writes it; the
-# shim execs the real Python interpreter under uv, so an interpreter resign
-# during a uv upgrade doesn't drop AX trust. Drift detection hashes this
-# file (when present) — *not* sys.executable — because the user-visible
-# trusted artifact is the shim.
-SHIM_PATH = Path.home() / ".local" / "bin" / "peek-mcp"
+# AX trust is granted to the binary at this path. `peek install` copies
+# the running PyInstaller-built binary here. Drift detection hashes this
+# file (when present) so we can warn when the install path's binary has
+# been replaced (e.g. by a rebuild) — AX trust attaches to the artifact
+# the kernel exec'd, so a replaced binary means trust must be re-granted.
+INSTALL_PATH = Path.home() / ".local" / "bin" / "peek-mcp"
 
 
 def config_dir() -> Path:
@@ -76,7 +77,7 @@ def state_path() -> Path:
 
 
 def is_trusted() -> bool:
-    """Return True if the running interpreter has been granted AX trust.
+    """Return True if the running binary has been granted AX trust.
 
     We import pyobjc lazily so the module is importable on non-macOS hosts
     (and in unit tests that mock this function).
@@ -126,15 +127,19 @@ def _sha256_of_file(path: str | Path) -> str:
 def _interpreter_path() -> str:
     """Return the path of the trusted artifact whose hash we persist.
 
-    The user grants AX trust to the *shim* at `~/.local/bin/peek-mcp`, so
-    the meaningful artifact for drift detection is the shim — not
-    `sys.executable`, which is the venv's Python interpreter (already
-    abstracted away from the user's grant). When the shim is missing
-    (development runs straight from the venv), fall back to `sys.executable`
-    so drift detection still gives a signal.
+    The user grants AX trust to the binary at `~/.local/bin/peek-mcp`
+    (placed there by `peek install`), so the meaningful artifact for drift
+    detection is the install path. When the install path is missing, we
+    have two cases:
+
+      - frozen mode (running directly from `dist/peek-mcp` before install):
+        hash `sys.executable` (the running PyInstaller binary).
+      - dev mode (running via `python -m peek.server` or via console
+        scripts under uv): hash `sys.executable` (the venv's interpreter)
+        so drift detection still gives a signal in development.
     """
-    if SHIM_PATH.exists():
-        return str(SHIM_PATH)
+    if INSTALL_PATH.exists():
+        return str(INSTALL_PATH)
     return sys.executable
 
 
@@ -172,7 +177,7 @@ def record_trusted_state(path: str | None = None) -> TrustRecord:
 
 
 def check_path_drift() -> DriftReport:
-    """Diff persisted trust record against the current interpreter path/hash.
+    """Diff persisted trust record against the current binary path/hash.
 
     `drifted=False` covers both "no prior record" and "matches prior". The
     caller decides how to surface drift to the user.
@@ -181,7 +186,7 @@ def check_path_drift() -> DriftReport:
     try:
         current_hash = _sha256_of_file(current_path)
     except OSError as exc:
-        logger.warning("cannot hash current interpreter at %s (%s)", current_path, exc)
+        logger.warning("cannot hash current binary at %s (%s)", current_path, exc)
         current_hash = ""
 
     state = _load_state().get("trusted") or {}

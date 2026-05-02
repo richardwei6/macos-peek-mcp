@@ -66,12 +66,29 @@ def _sensitive_resolver() -> windows.SensitiveResolver:
 
 
 class _StderrRedirector:
-    """File-like that redirects writes to stderr.
+    """File-like that redirects text writes to stderr while preserving
+    access to the real stdout's binary buffer.
 
-    MCP framing on stdio means a stray `print()` to stdout corrupts the
-    JSON-RPC stream. Replacing `sys.stdout` with this guard makes every
-    accidental write go to stderr instead.
+    Why this shape:
+    - MCP framing on stdio means a stray `print()` to stdout corrupts
+      the JSON-RPC stream. So `.write()` goes to stderr, catching every
+      accidental string write.
+    - MCP's `stdio_server` reads `sys.stdout.buffer` at startup to wrap
+      the byte stream in a UTF-8 TextIOWrapper. So we must keep
+      `.buffer` pointing at the *original* stdout's binary buffer —
+      otherwise MCP would emit JSON-RPC frames to stderr and the client
+      would see no responses on stdout.
+
+    Net effect: print('foo') -> stderr, but MCP's framed JSON output
+    still hits the real stdout via the captured `.buffer`.
     """
+
+    def __init__(self, real_stdout_buffer):
+        self._real_buffer = real_stdout_buffer
+
+    @property
+    def buffer(self):
+        return self._real_buffer
 
     def write(self, data: str) -> int:
         return sys.stderr.write(data)
@@ -91,14 +108,15 @@ class _StderrRedirector:
 
 
 def install_stdout_guard() -> None:
-    """Redirect `sys.stdout` writes to stderr.
+    """Redirect `sys.stdout` text writes to stderr, preserving stdout.buffer.
 
-    Called by `main()` *after* MCP has captured the real stdout for its
-    transport. The MCP server keeps a private reference to the original
-    stdout file handle, so this guard only catches application-level
-    print()s and library log lines that mistakenly go to stdout.
+    Replaces `sys.stdout` with a guard whose `.write()` funnels strings
+    to stderr (catching stray application `print()`s) but whose `.buffer`
+    still points at the real stdout's binary buffer (so MCP's stdio
+    transport can frame JSON-RPC responses on stdout).
     """
-    sys.stdout = _StderrRedirector()  # type: ignore[assignment]
+    real_buffer = sys.stdout.buffer
+    sys.stdout = _StderrRedirector(real_buffer)  # type: ignore[assignment]
 
 
 # --- logging --------------------------------------------------------------
@@ -125,11 +143,12 @@ logger = logging.getLogger(__name__)
 def _ax_permission_error() -> dict[str, Any]:
     return {
         "error": ERR_AX_PERMISSION_DENIED,
-        "hint": "Grant Accessibility access to the peek-mcp shim",
+        "hint": "Grant Accessibility access to the peek-mcp binary",
         "instructions": (
-            "Run `peek install-shim` to write a stable shim path, then open "
-            "System Settings → Privacy & Security → Accessibility and add "
-            "the shim. `peek doctor` will guide you."
+            "Build and install the binary via `./build.sh && "
+            "./dist/peek-mcp install`, then open System Settings → "
+            "Privacy & Security → Accessibility and add the binary at "
+            "~/.local/bin/peek-mcp. `peek-mcp doctor` will guide you."
         ),
     }
 
@@ -567,14 +586,14 @@ def main() -> None:
     drift = permissions.check_path_drift()
     if drift["drifted"]:
         logger.warning(
-            "AX trust may have drifted: prior=%s now=%s. Run `peek doctor` to refresh.",
+            "AX trust may have drifted: prior=%s now=%s. Run `peek-mcp doctor` to refresh.",
             drift["prior_path"],
             drift["current_path"],
         )
     if not permissions.is_trusted():
         logger.warning(
             "AX trust not granted; list_windows still works but read_window "
-            "will return ax_permission_denied. Run `peek doctor` for help."
+            "will return ax_permission_denied. Run `peek-mcp doctor` for help."
         )
     install_stdout_guard()
     mcp.run()
