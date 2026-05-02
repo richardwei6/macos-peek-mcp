@@ -5,11 +5,12 @@ Two responsibilities:
 1. Wrap the small set of pyobjc calls that report whether the running
    binary has been granted Accessibility trust, and open the right
    System Settings pane on first failure.
-2. Persist the path + sha256 of the binary the user granted trust to (the
-   PyInstaller-built `peek-mcp` binary copied to `~/.local/bin/peek-mcp`
-   by `peek install`). On every subsequent call, diff against the
-   persisted record so we can warn when the binary at the install path
-   has been replaced (e.g., a rebuild) and AX trust must be re-granted.
+2. Persist the path + sha256 of the binary inside the .app bundle the
+   user granted trust to (the Mach-O at
+   ``~/Applications/Peek.app/Contents/MacOS/peek-mcp``, placed there by
+   ``peek install``). On every subsequent call, diff against the
+   persisted record so we can warn when the bundle's binary has been
+   replaced (e.g., a rebuild) and AX trust must be re-granted.
 
 State persists at:
     $XDG_CONFIG_HOME/peek-mcp/state.json
@@ -37,12 +38,17 @@ logger = logging.getLogger(__name__)
 CONFIG_DIRNAME = "peek-mcp"
 STATE_FILENAME = "state.json"
 
-# AX trust is granted to the binary at this path. `peek install` copies
-# the running PyInstaller-built binary here. Drift detection hashes this
-# file (when present) so we can warn when the install path's binary has
-# been replaced (e.g. by a rebuild) — AX trust attaches to the artifact
-# the kernel exec'd, so a replaced binary means trust must be re-granted.
-INSTALL_PATH = Path.home() / ".local" / "bin" / "peek-mcp"
+# AX trust is granted to the .app bundle at APP_BUNDLE_PATH. `peek
+# install` copies the freshly-built bundle here and creates a CLI
+# symlink at CLI_SYMLINK_PATH that resolves to BUNDLE_BINARY_PATH.
+#
+# The kernel attaches AX trust to the Mach-O the bundle exec()s plus
+# the bundle's CFBundleIdentifier; drift detection hashes
+# BUNDLE_BINARY_PATH (when present) so we can warn when the bundle has
+# been replaced (e.g. by a rebuild) and trust must be re-granted.
+APP_BUNDLE_PATH = Path.home() / "Applications" / "Peek.app"
+BUNDLE_BINARY_PATH = APP_BUNDLE_PATH / "Contents" / "MacOS" / "peek-mcp"
+CLI_SYMLINK_PATH = Path.home() / ".local" / "bin" / "peek-mcp"
 
 
 def config_dir() -> Path:
@@ -127,19 +133,22 @@ def _sha256_of_file(path: str | Path) -> str:
 def _interpreter_path() -> str:
     """Return the path of the trusted artifact whose hash we persist.
 
-    The user grants AX trust to the binary at `~/.local/bin/peek-mcp`
-    (placed there by `peek install`), so the meaningful artifact for drift
-    detection is the install path. When the install path is missing, we
-    have two cases:
+    The user grants AX trust to the .app bundle at
+    ``~/Applications/Peek.app``. The kernel records the cdhash of the
+    Mach-O at ``Contents/MacOS/peek-mcp``, so that's the meaningful
+    artifact for drift detection.
 
-      - frozen mode (running directly from `dist/peek-mcp` before install):
-        hash `sys.executable` (the running PyInstaller binary).
-      - dev mode (running via `python -m peek.server` or via console
-        scripts under uv): hash `sys.executable` (the venv's interpreter)
-        so drift detection still gives a signal in development.
+    Precedence:
+      1. ``BUNDLE_BINARY_PATH`` if present — the installed bundle's
+         binary, which is what TCC actually checks.
+      2. ``sys.executable`` if it looks like the dev ``dist/peek-mcp``
+         (running the freshly-built single-file binary before install).
+      3. ``sys.executable`` fallback for dev mode (running via
+         ``python -m peek`` or under uv) so drift detection still
+         gives a signal in development.
     """
-    if INSTALL_PATH.exists():
-        return str(INSTALL_PATH)
+    if BUNDLE_BINARY_PATH.exists():
+        return str(BUNDLE_BINARY_PATH)
     return sys.executable
 
 
