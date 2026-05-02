@@ -69,10 +69,35 @@ def test_default_denylist_covers_known_apps():
     assert any("keychain" in p.casefold() for p in dl.app_name_patterns)
 
 
-def test_malformed_toml_recovers_gracefully():
-    dl = denylist.parse("this is = not valid [toml")
-    assert dl.bundle_ids == frozenset()
-    assert dl.app_name_patterns == ()
+def test_parse_raises_on_malformed_toml():
+    """parse() raises so load() can decide on fail-safe behavior."""
+    import tomllib
+    with pytest.raises(tomllib.TOMLDecodeError):
+        denylist.parse("this is = not valid [toml")
+
+
+def test_load_falls_back_to_package_default_on_malformed_user_file(tmp_path, monkeypatch):
+    """A typo in user denylist.toml must NOT silently disable privacy."""
+    user_file = tmp_path / "denylist.toml"
+    user_file.write_text("this is = not valid [toml")
+    monkeypatch.setattr(denylist, "user_denylist_path", lambda: user_file)
+    dl = denylist.load(install_default=False)
+    # Falls back to the package default — has 1Password, Keychain, etc.
+    assert "com.1password.1password" in dl.bundle_ids
+    assert any("keychain" in p.casefold() for p in dl.app_name_patterns)
+
+
+def test_load_falls_back_to_package_default_on_unreadable_user_file(tmp_path, monkeypatch):
+    """An unreadable user file (permissions, etc.) also fails safe."""
+    user_file = tmp_path / "denylist.toml"
+    user_file.write_text("bundle_ids = []\napp_name_patterns = []\n")
+    user_file.chmod(0o000)
+    monkeypatch.setattr(denylist, "user_denylist_path", lambda: user_file)
+    try:
+        dl = denylist.load(install_default=False)
+        assert "com.1password.1password" in dl.bundle_ids
+    finally:
+        user_file.chmod(0o600)  # restore so tmpdir cleanup works
 
 
 def test_install_default_creates_user_file(tmp_path):

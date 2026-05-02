@@ -10,14 +10,11 @@ import argparse
 import asyncio
 import json
 import os
-import stat
 import sys
 from pathlib import Path
 
 from peek import denylist, permissions, server, windows
-
-
-SHIM_PATH = Path.home() / ".local" / "bin" / "peek-mcp"
+from peek.permissions import SHIM_PATH
 
 
 # --- doctor ---------------------------------------------------------------
@@ -192,7 +189,7 @@ def cmd_install_shim(args: argparse.Namespace) -> int:
     target.parent.mkdir(parents=True, exist_ok=True)
     python = sys.executable
     target.write_text(SHIM_SCRIPT.format(python=python))
-    target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    target.chmod(0o700)  # rwx user only; AX-trusted binary, no group/other access
     print(f"wrote shim: {target}")
     print(f"shim execs: {python} -m peek.server")
     print()

@@ -45,9 +45,6 @@ AX_POSITION = "AXPosition"
 AX_WINDOW = "AXWindow"
 AX_WINDOWS = "AXWindows"
 AX_FOCUSED_UI_ELEMENT = "AXFocusedUIElement"
-AX_FOCUSED_WINDOW = "AXFocusedWindow"
-AX_TITLE_OF_WINDOW = "AXTitle"
-AX_ROLE = "AXRole"
 
 # Attributes that contribute text to the walker output.
 TEXT_ATTRS = (AX_VALUE, AX_TITLE, AX_DESCRIPTION, AX_HELP, AX_SELECTED_TEXT, AX_PLACEHOLDER)
@@ -137,10 +134,7 @@ def copy_multiple_attribute_values(
     `AXUIElementCopyAttributeValue` calls.
     """
     if hasattr(element, "attribute_values"):
-        try:
-            return element.attribute_values(names)
-        except Exception as exc:  # tests use this path; surface errors
-            raise
+        return element.attribute_values(names)
 
     try:
         from ApplicationServices import (  # type: ignore[import-not-found]
@@ -244,7 +238,7 @@ def walk_ax_tree(
         max_elements=max_elements,
         deadline=time.monotonic() + max_time_seconds,
     )
-    _walk(root, depth=0, budget=budget, seen_text=set())
+    _walk(root, depth=0, budget=budget)
     return {
         "text": "\n".join(budget.pieces),
         "flags": budget.flags,
@@ -253,7 +247,7 @@ def walk_ax_tree(
     }
 
 
-def _walk(element: Any, *, depth: int, budget: _WalkBudget, seen_text: set[int]) -> None:
+def _walk(element: Any, *, depth: int, budget: _WalkBudget) -> None:
     if budget.time_exceeded():
         budget.flags["truncated_at_time_limit"] = True
         return
@@ -328,7 +322,7 @@ def _walk(element: Any, *, depth: int, budget: _WalkBudget, seen_text: set[int])
         if budget.chars >= budget.max_chars:
             budget.flags["truncated_at_chars"] = True
             return
-        _walk(child, depth=depth + 1, budget=budget, seen_text=seen_text)
+        _walk(child, depth=depth + 1, budget=budget)
 
 
 # --- _AXUIElementGetWindow binding ----------------------------------------

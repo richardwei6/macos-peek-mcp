@@ -36,6 +36,13 @@ logger = logging.getLogger(__name__)
 CONFIG_DIRNAME = "peek-mcp"
 STATE_FILENAME = "state.json"
 
+# AX trust is granted to this shim path. `peek install-shim` writes it; the
+# shim execs the real Python interpreter under uv, so an interpreter resign
+# during a uv upgrade doesn't drop AX trust. Drift detection hashes this
+# file (when present) — *not* sys.executable — because the user-visible
+# trusted artifact is the shim.
+SHIM_PATH = Path.home() / ".local" / "bin" / "peek-mcp"
+
 
 def config_dir() -> Path:
     """Return the directory we use for user state and the user denylist.
@@ -117,13 +124,17 @@ def _sha256_of_file(path: str | Path) -> str:
 
 
 def _interpreter_path() -> str:
-    """Return the path that AX trust is actually granted to.
+    """Return the path of the trusted artifact whose hash we persist.
 
-    Per the design, the user grants AX trust to the *shim* at
-    `~/.local/bin/peek-mcp`, but the running process from MCP's POV is
-    whatever Python interpreter is executing. We persist the executable
-    path so the user-facing drift check is still meaningful.
+    The user grants AX trust to the *shim* at `~/.local/bin/peek-mcp`, so
+    the meaningful artifact for drift detection is the shim — not
+    `sys.executable`, which is the venv's Python interpreter (already
+    abstracted away from the user's grant). When the shim is missing
+    (development runs straight from the venv), fall back to `sys.executable`
+    so drift detection still gives a signal.
     """
+    if SHIM_PATH.exists():
+        return str(SHIM_PATH)
     return sys.executable
 
 

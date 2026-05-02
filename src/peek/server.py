@@ -165,22 +165,6 @@ def _list_windows_sync(on_screen_only: bool) -> list[Window]:
 # --- read_window plumbing -------------------------------------------------
 
 
-def _resolve_window_for_id(
-    pid: int, window_id: int, title_match: str | None
-) -> ax.FindWindowResult:
-    return ax.find_window_ax(pid, window_id=window_id, title_match=title_match)
-
-
-def _walk_one(ax_window: Any, max_depth: int, max_chars: int, max_elements: int, max_time_seconds: float) -> ax.WalkResult:
-    return ax.walk_ax_tree(
-        ax_window,
-        max_depth=max_depth,
-        max_chars=max_chars,
-        max_elements=max_elements,
-        max_time_seconds=max_time_seconds,
-    )
-
-
 def _grep_lines(
     text: str,
     pattern: str,
@@ -421,7 +405,7 @@ async def read_window_impl(
     if contains is not None:
         skipped: list[str] = []
         for w in win_list:
-            if w["sensitive"]:
+            if w["sensitive"] and not allow_sensitive:
                 skipped.append(w["bundle_id"] or w["app"])
                 continue
             try:

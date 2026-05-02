@@ -12,13 +12,19 @@ chat messages that say "ignore previous instructions and...". The README's
 threat model section documents this; the wrapper itself is here.
 
 Escaping rules:
-- Pre-existing `<window_text>` and `</window_text>` tags in the input are
+- Zero-width characters (U+200B/200C/200D/FEFF) are stripped from input so
+  an attacker can't pre-inject `<‍window_text trust="trusted">` and
+  evade the literal replacement that would otherwise neutralize the tag.
+- Pre-existing `<window_text>` and `</window_text>` tags are matched
+  case-insensitively (LLMs treat XML tags case-insensitively) and
   zero-width-broken so they can't close our wrapper or open a fake one.
-- Source string has its `"` and special chars escaped so an attacker can't
-  break out of the source attribute.
+- Source string has `"`, `<`, `>`, and control characters scrubbed so an
+  attacker cannot break out of the source attribute.
 """
 
 from __future__ import annotations
+
+import re
 
 # We deliberately use a zero-width joiner instead of HTML entity escapes:
 # the wrapper isn't HTML, and entity escapes would mangle log content
@@ -26,11 +32,21 @@ from __future__ import annotations
 # identical for the agent while breaking literal tag matching.
 _ZWJ = "‍"
 
+# Zero-width characters that LLMs ignore but that would let an attacker
+# pre-collide with our neutralization marker if left in the input.
+_ZERO_WIDTH_CHARS = ("​", "‌", "‍", "﻿")
+
 OPEN_LITERAL = "<window_text"
 CLOSE_LITERAL = "</window_text>"
 
 OPEN_NEUTRALIZED = f"<{_ZWJ}window_text"
 CLOSE_NEUTRALIZED = f"</{_ZWJ}window_text>"
+
+# Case-insensitive matchers. We anchor on the literal "window_text" so a
+# variant like "<WINDOW_TEXT" still gets neutralized — LLMs do not treat
+# XML tag case as semantically meaningful.
+_OPEN_RE = re.compile(r"<\s*window_text", re.IGNORECASE)
+_CLOSE_RE = re.compile(r"<\s*/\s*window_text\s*>", re.IGNORECASE)
 
 
 def _escape_source_attr(source: str) -> str:
@@ -47,6 +63,9 @@ def _escape_source_attr(source: str) -> str:
             out_chars.append("'")
         elif ch in ("<", ">"):
             out_chars.append(" ")
+        elif ch in _ZERO_WIDTH_CHARS:
+            # zero-widths in source could collide with our neutralization
+            out_chars.append(" ")
         elif ord(ch) < 0x20 and ch not in ("\t",):
             # control chars (incl. NUL, newline) are dropped
             out_chars.append(" ")
@@ -55,14 +74,30 @@ def _escape_source_attr(source: str) -> str:
     return "".join(out_chars)
 
 
-def _neutralize_inner_tags(text: str) -> str:
-    """Break literal `<window_text>` / `</window_text>` tags in input."""
+def _strip_zero_width(text: str) -> str:
+    """Remove zero-width characters that LLMs ignore but that bypass tag escaping."""
     if not text:
         return text
+    for zw in _ZERO_WIDTH_CHARS:
+        if zw in text:
+            text = text.replace(zw, "")
+    return text
+
+
+def _neutralize_inner_tags(text: str) -> str:
+    """Break literal `<window_text>` / `</window_text>` tags in input.
+
+    Strips zero-widths first so attackers can't pre-collide with the
+    neutralization marker. Matches case-insensitively because LLMs treat
+    `<WINDOW_TEXT>` the same as `<window_text>`.
+    """
+    if not text:
+        return text
+    text = _strip_zero_width(text)
     # Order matters: replace closing first so we don't double-process the
     # closing's substring of the opening literal.
-    text = text.replace(CLOSE_LITERAL, CLOSE_NEUTRALIZED)
-    text = text.replace(OPEN_LITERAL, OPEN_NEUTRALIZED)
+    text = _CLOSE_RE.sub(CLOSE_NEUTRALIZED, text)
+    text = _OPEN_RE.sub(OPEN_NEUTRALIZED, text)
     return text
 
 

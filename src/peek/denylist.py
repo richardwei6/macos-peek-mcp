@@ -79,12 +79,12 @@ def install_default_if_missing(target: Path | None = None) -> Path:
 
 
 def parse(text: str) -> Denylist:
-    """Parse TOML denylist text. Tolerates missing keys."""
-    try:
-        data = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        logger.warning("denylist TOML parse error (%s); using empty denylist", exc)
-        return Denylist.empty()
+    """Parse TOML denylist text. Raises tomllib.TOMLDecodeError on bad TOML.
+
+    Callers (load()) are responsible for fail-safe behavior on parse failures.
+    Tolerates missing or wrong-typed keys (logs a warning, ignores them).
+    """
+    data = tomllib.loads(text)
     bundle_ids = data.get("bundle_ids") or []
     patterns = data.get("app_name_patterns") or []
     if not isinstance(bundle_ids, list):
@@ -99,11 +99,27 @@ def parse(text: str) -> Denylist:
     )
 
 
-def load(path: Path | None = None, *, install_default: bool = True) -> Denylist:
-    """Load the user denylist.
+def _load_package_default() -> Denylist:
+    """Load the bundled default-denylist.toml. Used as a fail-safe."""
+    if not _DEFAULT_RESOURCE_PATH.exists():
+        logger.error(
+            "package default-denylist missing at %s — privacy denylist is empty!",
+            _DEFAULT_RESOURCE_PATH,
+        )
+        return Denylist.empty()
+    try:
+        return parse(_DEFAULT_RESOURCE_PATH.read_text())
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        logger.error("cannot parse package default-denylist (%s); empty fallback", exc)
+        return Denylist.empty()
 
-    Returns an empty `Denylist` if no file exists and `install_default=False`.
-    Logs (and keeps going) on unreadable / malformed files.
+
+def load(path: Path | None = None, *, install_default: bool = True) -> Denylist:
+    """Load the user denylist with fail-safe fallback to the package default.
+
+    A malformed user denylist.toml falls back to the shipped default — *not*
+    an empty denylist — so a typo or accidental edit doesn't silently
+    disable privacy protection.
     """
     target = path or user_denylist_path()
     if not target.exists():
@@ -114,9 +130,20 @@ def load(path: Path | None = None, *, install_default: bool = True) -> Denylist:
     try:
         text = target.read_text()
     except OSError as exc:
-        logger.warning("cannot read denylist at %s (%s); using empty", target, exc)
-        return Denylist.empty()
-    return parse(text)
+        logger.warning(
+            "cannot read user denylist at %s (%s); falling back to package default",
+            target, exc,
+        )
+        return _load_package_default()
+    try:
+        return parse(text)
+    except tomllib.TOMLDecodeError as exc:
+        logger.warning(
+            "user denylist at %s has invalid TOML (%s); falling back to package default. "
+            "Fix the file and reload the MCP server to use your customizations.",
+            target, exc,
+        )
+        return _load_package_default()
 
 
 # --- matching --------------------------------------------------------------
