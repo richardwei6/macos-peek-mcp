@@ -142,7 +142,7 @@ Claude Code  ──stdio JSON-RPC──▶  ~/.local/bin/peek-mcp  (symlink)
 
 Every blocking AX call runs on a bounded `ThreadPoolExecutor` so concurrent MCP requests don't stall on each other. Per-window deadline (default 3s) is enforced via `asyncio.wait_for`; on timeout, the call returns partial results with `truncated_at_time_limit=True`.
 
-The binary is built with PyInstaller (`--onedir`) and wrapped in a `Peek.app` bundle codesigned with the user's local Apple Development identity (hardened runtime + entitlements that authorize PyInstaller's library loading), bundle ID `com.richardwei6.macos-peek-mcp`. AX trust attaches at the kernel cdhash + Team Identifier level — no Python interpreter is exposed to TCC, and the `.app` form is what the modern macOS Accessibility pane natively recognizes. `--onedir` (not `--onefile`) is intentional: the running binary is `/Applications/Peek.app/Contents/MacOS/peek-mcp` directly, with no `/var/folders/.../_MEIxxxxx/` self-extraction step that would break TCC's bundle-context match on Sonoma 14.4+ and Sequoia.
+The binary is built with PyInstaller (`--onedir`) and wrapped in a `Peek.app` bundle codesigned with the user's local Apple Development identity (hardened runtime + entitlements that authorize PyInstaller's library loading), bundle ID `dev.macos-peek-mcp`. AX trust attaches at the kernel cdhash + Team Identifier level — no Python interpreter is exposed to TCC, and the `.app` form is what the modern macOS Accessibility pane natively recognizes. `--onedir` (not `--onefile`) is intentional: the running binary is `/Applications/Peek.app/Contents/MacOS/peek-mcp` directly, with no `/var/folders/.../_MEIxxxxx/` self-extraction step that would break TCC's bundle-context match on Sonoma 14.4+ and Sequoia.
 
 ## Threat model
 
@@ -150,7 +150,7 @@ This tool reads text from your windows and pipes it into an LLM. Three risks wor
 
 ### AX trust scope
 
-AX trust is granted to the **`Peek.app` bundle at `/Applications/Peek.app`** — specifically the kernel records the bundle's cdhash plus the Team Identifier from the Apple Development certificate the bundle is signed with. The bundle identifier (`com.richardwei6.macos-peek-mcp`) is the human-facing label; the kernel's match is on `(team-id, cdhash)`. The grant authorizes that exact artifact. A different process running under your user, even a Python interpreter, gets nothing from this grant.
+AX trust is granted to the **`Peek.app` bundle at `/Applications/Peek.app`** — specifically the kernel records the bundle's cdhash plus the Team Identifier from the Apple Development certificate the bundle is signed with. The bundle identifier (`dev.macos-peek-mcp`) is the human-facing label; the kernel's match is on `(team-id, cdhash)`. The grant authorizes that exact artifact. A different process running under your user, even a Python interpreter, gets nothing from this grant.
 
 The bundle is signed locally with your Apple Development certificate (hardened runtime + entitlements for PyInstaller's library loading) — *not* ad-hoc. TCC on Sonoma 14.4+ and Sequoia enforces the Team Identifier strictly, which is why the local-Apple-Developer-certificate signing is the load-bearing piece, not just the `--onedir` bundle layout.
 
