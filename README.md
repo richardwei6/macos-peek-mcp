@@ -33,7 +33,7 @@ Requires macOS 13+, [`uv`](https://docs.astral.sh/uv/), and the Apple command li
 curl -fsSL https://raw.githubusercontent.com/richardwei6/macos-peek-mcp/main/install.sh | bash
 ```
 
-The installer clones the repo to `~/.local/share/macos-peek-mcp/src`, builds the single-file Mach-O binary with PyInstaller (~1–2 min on first run), ad-hoc-codesigns it, and copies it to `~/.local/bin/peek-mcp`. Re-running updates the source and rebuilds.
+The installer clones the repo to `~/.local/share/macos-peek-mcp/src`, builds the `Peek.app` bundle (and a raw `dist/peek-mcp` Mach-O for dev use) with PyInstaller (~1–2 min on first run), ad-hoc-codesigns both, installs the bundle to `~/Applications/Peek.app`, and creates a CLI symlink at `~/.local/bin/peek-mcp` that resolves to the bundle's binary. Re-running updates the source and rebuilds.
 
 If you'd rather inspect the script before piping to bash:
 
@@ -48,11 +48,11 @@ Or do it by hand:
 ```bash
 git clone https://github.com/richardwei6/macos-peek-mcp.git
 cd macos-peek-mcp
-./build.sh                      # build + ad-hoc-sign dist/peek-mcp (~20 MB)
-./dist/peek-mcp install         # copy binary to ~/.local/bin/peek-mcp
+./build.sh                      # build + ad-hoc-sign dist/Peek.app (and dist/peek-mcp)
+./dist/peek-mcp install         # install Peek.app to ~/Applications + ~/.local/bin/peek-mcp symlink
 ```
 
-After the binary is installed, run:
+After the bundle is installed, run:
 
 ```bash
 peek-mcp doctor                 # opens System Settings → grant AX, then re-run
@@ -60,9 +60,9 @@ peek-mcp doctor                 # opens System Settings → grant AX, then re-ru
 
 `peek-mcp doctor` will:
 
-1. Report `AXIsProcessTrusted()` state.
-2. Open *System Settings → Privacy & Security → Accessibility* on first failure — click **+**, **Cmd+Shift+G**, paste `~/.local/bin/peek-mcp`, enable the toggle.
-3. Record the binary's path + sha256 on success and diff against it on every later run, flagging silent revocation if the binary changes.
+1. Report `AXIsProcessTrusted()` state and confirm the bundle + symlink layout.
+2. Open *System Settings → Privacy & Security → Accessibility* on first failure — drag `~/Applications/Peek.app` into the list (or click **+** and select it from Applications). Enable the toggle.
+3. Record the bundle binary's path + sha256 on success and diff against it on every later run, flagging silent revocation if the binary changes.
 
 Re-run `peek-mcp doctor` after granting access. It should report `AX trust: GRANTED`.
 
@@ -82,15 +82,15 @@ Add to `~/.claude.json` (or your project's `.mcp.json`):
 
 Restart Claude Code, run `/mcp` — `peek` should appear with two tools.
 
-Any other MCP-speaking client works the same way: point its stdio command at `~/.local/bin/peek-mcp`.
+Any other MCP-speaking client works the same way: point its stdio command at `~/.local/bin/peek-mcp` (the symlink that resolves to `~/Applications/Peek.app/Contents/MacOS/peek-mcp` — TCC follows the symlink and applies the bundle's grant correctly).
 
 ## CLI reference
 
 The same binary handles MCP server mode (no args) and CLI mode (subcommands):
 
 ```bash
-peek-mcp doctor                                # AX state + drift check
-peek-mcp install                               # copy binary into ~/.local/bin
+peek-mcp doctor                                # AX state + bundle/symlink/drift check
+peek-mcp install                               # install Peek.app + ~/.local/bin/peek-mcp symlink
 peek-mcp list                                  # table of visible windows
 peek-mcp list --json                           # JSON output
 peek-mcp read --focused                        # text from the focused window
@@ -105,7 +105,10 @@ peek-mcp read --app "1Password" --allow-sensitive   # explicit denylist override
 ## How it works
 
 ```
-Claude Code  ──stdio JSON-RPC──▶  ~/.local/bin/peek-mcp (real Mach-O binary)
+Claude Code  ──stdio JSON-RPC──▶  ~/.local/bin/peek-mcp  (symlink)
+                                          │
+                                          ▼
+                          ~/Applications/Peek.app/Contents/MacOS/peek-mcp
                                           │
                                           ├─ list_windows()
                                           │    └─ CGWindowList   (no AX needed)
@@ -122,7 +125,7 @@ Claude Code  ──stdio JSON-RPC──▶  ~/.local/bin/peek-mcp (real Mach-O b
 
 Every blocking AX call runs on a bounded `ThreadPoolExecutor` so concurrent MCP requests don't stall on each other. Per-window deadline (default 3s) is enforced via `asyncio.wait_for`; on timeout, the call returns partial results with `truncated_at_time_limit=True`.
 
-The binary is built with PyInstaller (`--onefile`) and ad-hoc-codesigned with a stable `Identifier=peek-mcp` so AX trust attaches cleanly at the kernel cdhash level — no Python interpreter is exposed to TCC.
+The binary is built with PyInstaller (`--onefile`) and wrapped in a `Peek.app` bundle ad-hoc-codesigned with bundle ID `com.richardwei6.macos-peek-mcp`. AX trust attaches at the kernel cdhash + bundle ID level — no Python interpreter is exposed to TCC, and the `.app` form is what the modern macOS Accessibility pane natively recognizes.
 
 ## Threat model
 
@@ -130,9 +133,11 @@ This tool reads text from your windows and pipes it into an LLM. Three risks wor
 
 ### AX trust scope
 
-AX trust is granted to the **binary at `~/.local/bin/peek-mcp`** — specifically the kernel records the Mach-O cdhash plus the ad-hoc-signed Identifier (`peek-mcp`). The grant authorizes that exact artifact. A different process running under your user, even a Python interpreter, gets nothing from this grant.
+AX trust is granted to the **`Peek.app` bundle at `~/Applications/Peek.app`** — specifically the kernel records the bundle's cdhash plus the bundle identifier (`com.richardwei6.macos-peek-mcp`). The grant authorizes that exact artifact. A different process running under your user, even a Python interpreter, gets nothing from this grant.
 
-Rebuilding the binary (and reinstalling) produces a new cdhash. TCC will revoke the prior grant and require a fresh one. That is correct: trust should not survive artifact replacement.
+The CLI symlink at `~/.local/bin/peek-mcp` resolves to `Peek.app/Contents/MacOS/peek-mcp` — the kernel resolves any execution of the symlink (or of the binary directly) to the bundle context, so trust applies regardless of which path your MCP client invokes.
+
+Rebuilding the bundle (and reinstalling) produces a new cdhash. TCC will revoke the prior grant and require a fresh one. That is correct: trust should not survive artifact replacement.
 
 ### Prompt injection
 
@@ -172,10 +177,13 @@ A typo or unreadable user file falls back to the bundled default — never to an
 ## Troubleshooting
 
 **`peek-mcp doctor` says AX trust drift detected.**
-The binary at the install path was replaced — usually because you re-ran `./build.sh && ./dist/peek-mcp install`. Open *System Settings → Privacy & Security → Accessibility*, remove the old `peek-mcp` entry, add `~/.local/bin/peek-mcp` again, re-run `peek-mcp doctor`.
+The bundle's binary was replaced — usually because you re-ran `./build.sh && ./dist/peek-mcp install`. Open *System Settings → Privacy & Security → Accessibility*, remove the old `Peek` entry, drag `~/Applications/Peek.app` back in (or click + and select it from Applications), re-run `peek-mcp doctor`.
+
+**`Peek.app` doesn't show up when I click + in Accessibility.**
+The bundle wasn't installed to a location System Settings searches. Verify `~/Applications/Peek.app` exists, then drag it directly into the Accessibility list (the `+` picker also accepts a drag).
 
 **`read_window` returns `ax_permission_denied` even though I granted trust.**
-You probably granted trust to a different `peek-mcp` on your `$PATH`. `peek-mcp doctor` prints the binary it sees as `current binary:` — that's the one TCC is checking.
+You probably granted trust to a different copy of Peek.app, or to the raw `dist/peek-mcp` binary instead of the bundle. `peek-mcp doctor` prints the bundle binary it sees — that's the one TCC is checking. Re-grant the bundle at `~/Applications/Peek.app`.
 
 **Symbol load failure: `_AXUIElementGetWindow not found`.**
 Logged at startup; falls back to title+bounds matching. Window-ID selectors may return `ambiguous_window`. The private SPI has been stable for 15+ years (Hammerspoon, yabai, AltTab use it) so this should not happen on a normal macOS install — file an issue with `uname -a`.
@@ -205,8 +213,8 @@ uv sync --group dev
 uv run pytest tests/                  # unit tests (62, no AX needed)
 uv run pytest tests/ -m integration   # AX-required (local only)
 
-./build.sh                            # build + ad-hoc sign dist/peek-mcp
-./dist/peek-mcp install               # copy to ~/.local/bin/peek-mcp
+./build.sh                            # build + ad-hoc sign dist/Peek.app and dist/peek-mcp
+./dist/peek-mcp install               # install Peek.app + ~/.local/bin/peek-mcp symlink
 ```
 
 Layout:

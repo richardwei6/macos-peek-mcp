@@ -4,15 +4,17 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/richardwei6/macos-peek-mcp/main/install.sh | bash
 #
-# Clones the repo, builds the single-file Mach-O binary with PyInstaller,
-# ad-hoc-codesigns it, and copies it to ~/.local/bin/peek-mcp. Idempotent —
-# re-running updates the source and rebuilds.
+# Clones the repo, builds the Peek.app bundle (and a raw Mach-O binary)
+# with PyInstaller, ad-hoc-codesigns both, installs the bundle to
+# ~/Applications/Peek.app, and creates a CLI symlink at
+# ~/.local/bin/peek-mcp. Idempotent — re-running updates source and rebuilds.
 
 set -euo pipefail
 
 REPO_URL="https://github.com/richardwei6/macos-peek-mcp.git"
 INSTALL_DIR="${HOME}/.local/share/macos-peek-mcp"
 SRC_DIR="${INSTALL_DIR}/src"
+BUNDLE_PATH="${HOME}/Applications/Peek.app"
 BIN_PATH="${HOME}/.local/bin/peek-mcp"
 
 # --- output helpers ---------------------------------------------------------
@@ -74,14 +76,14 @@ else
 fi
 
 # --- build ------------------------------------------------------------------
-info "building binary (downloads pyinstaller + pyobjc on first run; takes ~1-2 min)"
+info "building Peek.app bundle (downloads pyinstaller + pyobjc on first run; takes ~1-2 min)"
 cd "$SRC_DIR"
 ./build.sh
-BIN_SIZE=$(du -h dist/peek-mcp | cut -f1)
-ok "built dist/peek-mcp (${BIN_SIZE})"
+APP_SIZE=$(du -sh dist/Peek.app | cut -f1)
+ok "built dist/Peek.app (${APP_SIZE})"
 
 # --- install ----------------------------------------------------------------
-info "installing to $BIN_PATH"
+info "installing Peek.app to $BUNDLE_PATH and CLI symlink to $BIN_PATH"
 ./dist/peek-mcp install
 ok "installed"
 
@@ -92,14 +94,13 @@ echo "----------------------------------------"
 echo ""
 echo "  1. Run:"
 echo ""
-echo "         $BIN_PATH doctor"
+echo "         peek-mcp doctor"
 echo ""
 echo "     It opens System Settings to the right pane on first run."
 echo ""
 echo "  2. In System Settings -> Privacy & Security -> Accessibility,"
-echo "     click +, hit Cmd+Shift+G, paste:"
-echo ""
-echo "         $BIN_PATH"
+echo "     click + and select Peek.app from your Applications folder."
+echo "     (Or drag $BUNDLE_PATH into the list.)"
 echo ""
 echo "     Enable the toggle. Re-run \`peek-mcp doctor\` -- should report GRANTED."
 echo ""
@@ -110,6 +111,9 @@ echo "           \"mcpServers\": {"
 echo "             \"peek\": { \"command\": \"$BIN_PATH\" }"
 echo "           }"
 echo "         }"
+echo ""
+echo "     The symlink at $BIN_PATH resolves to the bundle's binary, so TCC"
+echo "     applies trust correctly when MCP clients invoke it."
 echo ""
 echo "  4. Restart Claude Code; run /mcp -- peek should appear with two tools."
 echo ""
