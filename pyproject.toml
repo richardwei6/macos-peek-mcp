@@ -21,14 +21,8 @@ dependencies = [
     "pyobjc-framework-Cocoa>=10.0",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23",
-]
-
 [project.scripts]
-peek-mcp = "peek.server:main"
+peek-mcp = "peek.entry:main"
 peek = "peek.cli:main"
 
 [build-system]
@@ -53,4 +47,5 @@ addopts = "-m 'not integration'"
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "pyinstaller>=6.0",
 ]

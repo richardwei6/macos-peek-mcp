@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,7 +32,23 @@ logger = logging.getLogger(__name__)
 
 
 DENYLIST_FILENAME = "denylist.toml"
-_DEFAULT_RESOURCE_PATH = Path(__file__).parent / "data" / "default-denylist.toml"
+
+
+def _resolve_default_resource_path() -> Path:
+    """Return the path to the bundled default-denylist.toml.
+
+    In a PyInstaller-frozen binary, package data is unpacked to the
+    temporary directory at `sys._MEIPASS`. The `__file__`-relative path
+    used in dev mode points into the unpacked source tree and so doesn't
+    resolve correctly inside the frozen bundle. Honor `_MEIPASS` first.
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        return Path(meipass) / "peek" / "data" / "default-denylist.toml"
+    return Path(__file__).parent / "data" / "default-denylist.toml"
+
+
+_DEFAULT_RESOURCE_PATH = _resolve_default_resource_path()
 
 
 # --- public types ----------------------------------------------------------
