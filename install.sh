@@ -5,7 +5,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/richardwei6/macos-peek-mcp/main/install.sh | bash
 #
 # Clones the repo, builds the Peek.app bundle with PyInstaller (--onedir),
-# ad-hoc-codesigns it, installs the bundle to /Applications/Peek.app
+# codesigns it with the user's local Apple Development identity (hardened
+# runtime + entitlements), installs the bundle to /Applications/Peek.app
 # (one sudo prompt), and creates a CLI symlink at ~/.local/bin/peek-mcp.
 # Idempotent — re-running updates source and rebuilds.
 
@@ -48,6 +49,22 @@ fi
 
 command -v git >/dev/null 2>&1 || fail "git not found. Install Xcode Command Line Tools: xcode-select --install"
 command -v codesign >/dev/null 2>&1 || fail "codesign not found. Install Xcode Command Line Tools: xcode-select --install"
+
+# Local Apple Development codesigning identity is required: ad-hoc signing
+# isn't sufficient for AX trust on Sonoma 14.4+ / Sequoia (TCC enforces a
+# real Team Identifier at the kernel cdhash level). Catch this here so the
+# user hits an actionable error before mid-build.
+if ! security find-identity -v -p codesigning 2>/dev/null \
+        | grep -qE "Apple Development:|Mac Developer:"; then
+    fail "No Apple Development codesigning identity found.
+
+  Set up a free Personal Team in Xcode (no paid membership required):
+    1. Open Xcode
+    2. Xcode -> Settings -> Accounts -> + -> Apple ID
+    3. Sign in, select your team -> Manage Certificates -> + -> Apple Development
+    4. Re-run this installer.
+"
+fi
 
 if ! command -v uv >/dev/null 2>&1; then
     warn "uv (https://docs.astral.sh/uv/) is required and not installed."
