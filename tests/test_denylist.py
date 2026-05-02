@@ -100,6 +100,24 @@ def test_load_falls_back_to_package_default_on_unreadable_user_file(tmp_path, mo
         user_file.chmod(0o600)  # restore so tmpdir cleanup works
 
 
+def test_default_resource_path_resolves_in_dev_mode():
+    """In dev mode (no sys._MEIPASS), _DEFAULT_RESOURCE_PATH points at the
+    in-tree data file and that file exists.
+
+    The frozen-mode (_MEIPASS) branch is exercised manually by running
+    the built binary; we don't try to fake _MEIPASS in unit tests.
+    """
+    import sys as _sys
+    assert not hasattr(_sys, "_MEIPASS"), (
+        "test runs in dev mode; PyInstaller bundles set _MEIPASS"
+    )
+    # The module-level constant captured the dev-mode path at import time.
+    assert denylist._DEFAULT_RESOURCE_PATH.exists()
+    assert denylist._DEFAULT_RESOURCE_PATH.name == "default-denylist.toml"
+    # And the resolver function returns the same path under the same conditions.
+    assert denylist._resolve_default_resource_path() == denylist._DEFAULT_RESOURCE_PATH
+
+
 def test_install_default_creates_user_file(tmp_path):
     target = tmp_path / "denylist.toml"
     assert not target.exists()

@@ -28,42 +28,47 @@ below.
 
 ## Install
 
-Requires macOS 13+, Python 3.11+, and [`uv`](https://docs.astral.sh/uv/).
+Requires macOS 13+, Python 3.11+, [`uv`](https://docs.astral.sh/uv/), and
+the Apple command line tools (for `codesign`).
 
 ```bash
 git clone <this repo>
 cd macos-peek-mcp
-uv tool install .
-peek install-shim
-peek doctor
+./build.sh
+./dist/peek-mcp install
+peek-mcp doctor
 ```
 
-`peek install-shim` writes a stable shell shim at `~/.local/bin/peek-mcp`.
-Grant Accessibility access to **the shim path**, not the venv interpreter
-— `uv` re-signs the interpreter on upgrade and AX trust is silently
-revoked. The shim is stable.
+`./build.sh` runs PyInstaller to produce a single Mach-O binary at
+`dist/peek-mcp` (~20 MB) and ad-hoc signs it. `./dist/peek-mcp install`
+copies the binary to `~/.local/bin/peek-mcp` (mode `0700`) and prints
+the path you grant Accessibility access to.
 
-`peek doctor`:
+`peek-mcp doctor`:
 
 1. Reports `AXIsProcessTrusted()` state.
-2. Records the shim path + sha256 hash on first successful trusted call.
-3. On every subsequent run, diffs against the prior record and warns if
-   either changed (your AX trust may have been silently revoked; re-grant).
+2. Records the binary path + sha256 hash on first successful trusted call.
+3. On every subsequent run, diffs against the prior record. If you
+   rebuild and reinstall, the hash changes and doctor flags drift —
+   that's expected: AX trust attaches to the binary the kernel exec'd,
+   so a replaced binary requires a fresh grant.
 4. Opens *System Settings → Privacy & Security → Accessibility* on first
    failure.
 
 ## Granting AX access
 
-When prompted (or after running `peek doctor`):
+When prompted (or after running `peek-mcp doctor`):
 
 1. Open **System Settings → Privacy & Security → Accessibility**.
 2. Click **+**, then **Cmd+Shift+G** in the file picker, and paste:
    `~/.local/bin/peek-mcp`
 3. Enable the toggle.
-4. Re-run `peek doctor` — should report `AX trust: GRANTED`.
+4. Re-run `peek-mcp doctor` — should report `AX trust: GRANTED`.
 
-If you skip the shim and grant AX to the Python interpreter directly,
-the next `uv` upgrade will silently revoke it.
+If you rebuild and reinstall, you'll need to re-grant AX. The kernel
+identifies the binary by its on-disk Mach-O cdhash, so any rebuild
+produces a different artifact even with identical source. This is
+correct behavior: TCC trust should not survive artifact replacement.
 
 ## Claude Code config
 
@@ -83,22 +88,38 @@ Restart Claude Code, run `/mcp` — `peek` should appear with two tools.
 
 ## CLI usage
 
+The same binary handles both MCP server mode (no args) and CLI mode
+(via subcommands):
+
 ```bash
-peek list                                 # table of visible windows
-peek list --json                          # JSON
-peek read --focused                       # text from the focused window
-peek read --app "Console" --grep "ERROR"  # filter Console for ERROR lines
-peek read --contains "stack trace"        # find first window matching
-peek read --window-id 12345 --json        # specific window, JSON output
-peek read --app "1Password" --allow-sensitive   # explicit denylist override
+peek-mcp list                                 # table of visible windows
+peek-mcp list --json                          # JSON
+peek-mcp read --focused                       # text from the focused window
+peek-mcp read --app "Console" --grep "ERROR"  # filter Console for ERROR lines
+peek-mcp read --contains "stack trace"        # find first window matching
+peek-mcp read --window-id 12345 --json        # specific window, JSON output
+peek-mcp read --app "1Password" --allow-sensitive   # explicit denylist override
 ```
 
-`peek doctor` is the canonical "what's wrong / how to fix it" surface.
+`peek-mcp doctor` is the canonical "what's wrong / how to fix it" surface.
 
 ## Threat model
 
 This tool reads text from other windows on your Mac and pipes it into an
-MCP client. Two specific risks worth understanding:
+MCP client. Three risks worth understanding:
+
+### AX trust scope
+
+AX (TCC) trust is granted to the **binary at `~/.local/bin/peek-mcp`**.
+Specifically, the kernel records the Mach-O's cdhash plus its
+ad-hoc-signed Identifier (`peek-mcp`). The grant authorizes that exact
+artifact and nothing else: a different process running under the same
+user, even a Python interpreter, gets no AX access from this grant.
+
+Removing or rebuilding the binary (and re-running `peek-mcp install`)
+produces a new cdhash — TCC will revoke the prior grant and require you
+to re-grant. That is the correct behavior: trust should not survive
+artifact replacement.
 
 ### Prompt injection
 
@@ -149,16 +170,17 @@ requesting an override.
 
 ## Troubleshooting
 
-**`peek doctor` says AX trust drift detected.**
-The path or hash of the binary AX trust was granted to changed. Re-open
-*System Settings → Privacy & Security → Accessibility*, remove the old
-entry, and add `~/.local/bin/peek-mcp` again. Then re-run `peek doctor`
-to refresh the record.
+**`peek-mcp doctor` says AX trust drift detected.**
+The binary at the install path was replaced (e.g. you ran `./build.sh`
+followed by `./dist/peek-mcp install`). Open *System Settings → Privacy
+& Security → Accessibility*, remove the old `peek-mcp` entry, and add
+`~/.local/bin/peek-mcp` again. Then re-run `peek-mcp doctor` to refresh
+the recorded hash.
 
 **`read_window` returns `ax_permission_denied` even though I granted trust.**
-You probably granted trust to the Python interpreter rather than the shim,
-and `uv` re-signed it. Run `peek install-shim` if you haven't, and grant
-trust to `~/.local/bin/peek-mcp` exactly.
+Check that you granted trust to the binary at `~/.local/bin/peek-mcp` and
+not to some other peek-mcp on your `$PATH`. `peek-mcp doctor` prints the
+binary it sees as `current binary:` — that's the one TCC's checking.
 
 **Symbol load failure: `_AXUIElementGetWindow not found`.**
 Logged at startup, falls back to title+bounds matching. Window-ID
@@ -190,17 +212,27 @@ when the agent needs to see something.
 
 ## Development
 
+The build produces a single Mach-O binary; for fast iteration on pure
+helpers (walker, denylist, envelope, grep) the unit tests run against
+the Python source directly:
+
 ```bash
-uv sync
+uv sync --group dev
 uv run pytest tests/                 # unit tests
 uv run pytest tests/ -m integration  # AX-required tests (local only)
+
+./build.sh                           # build + ad-hoc sign dist/peek-mcp
+./dist/peek-mcp install              # copy to ~/.local/bin/peek-mcp
 ```
 
-The project has 59 unit tests covering all pure helpers (walker, value
+The project has 62 unit tests covering all pure helpers (walker, value
 coercion, window filter, denylist, envelope, server error envelopes,
 grep, contains-selector). AX-integration tests live in
 `tests/test_integration.py` behind the `integration` marker because they
 require a macOS host with AX trust granted to the running interpreter.
+
+The frozen-mode `_MEIPASS` path resolution in `peek.denylist` is verified
+by running the built binary; we don't fake `_MEIPASS` in unit tests.
 
 Project layout, design rationale, and the full implementation plan live
 in:
