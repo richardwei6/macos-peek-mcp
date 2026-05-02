@@ -1,7 +1,9 @@
 """`peek` CLI: `doctor`, `list`, `read`, `install` subcommands.
 
 Used for manual development against the live AX API and to install the
-PyInstaller-built binary at the stable path AX trust is granted to.
+PyInstaller-built ``Peek.app`` bundle at the stable path AX trust is
+granted to (``~/Applications/Peek.app``), plus a CLI symlink at
+``~/.local/bin/peek-mcp`` for ergonomics.
 """
 
 from __future__ import annotations
@@ -14,7 +16,22 @@ import sys
 from pathlib import Path
 
 from peek import denylist, permissions, server, windows
-from peek.permissions import INSTALL_PATH
+from peek.permissions import (
+    APP_BUNDLE_PATH,
+    BUNDLE_BINARY_PATH,
+    CLI_SYMLINK_PATH,
+)
+
+
+def _display(p: Path) -> str:
+    """Render a path with ``~`` for the home prefix when applicable."""
+    s = str(p)
+    home = str(Path.home())
+    if s == home:
+        return "~"
+    if s.startswith(home + "/"):
+        return "~" + s[len(home):]
+    return s
 
 
 # --- doctor ---------------------------------------------------------------
@@ -25,34 +42,62 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     print("-" * 40)
 
     trusted = permissions.is_trusted()
-    print(f"AX trust:           {'GRANTED' if trusted else 'NOT GRANTED'}")
+
+    bundle_present = APP_BUNDLE_PATH.exists()
+    binary_present = BUNDLE_BINARY_PATH.exists()
+    symlink_present = CLI_SYMLINK_PATH.is_symlink() or CLI_SYMLINK_PATH.exists()
+
+    print(
+        f"app bundle:        {_display(APP_BUNDLE_PATH)}  "
+        f"[{'present' if bundle_present else 'MISSING'}]"
+    )
 
     drift = permissions.check_path_drift()
-    print(f"current binary:     {drift['current_path']}")
-    print(f"current sha256:     {drift['current_hash'][:16]}...")
+    if binary_present:
+        short_hash = drift["current_hash"][:16] if drift["current_hash"] else "?"
+        print(
+            f"bundle binary:     {_display(BUNDLE_BINARY_PATH)}  "
+            f"[hash:{short_hash}...]"
+        )
+    else:
+        print(
+            f"bundle binary:     {_display(BUNDLE_BINARY_PATH)}  [MISSING]"
+        )
+
+    print(
+        f"cli symlink:       {_display(CLI_SYMLINK_PATH)}  "
+        f"[{'present' if symlink_present else 'MISSING'}]"
+    )
+
+    print(f"AX trust:          {'GRANTED' if trusted else 'NOT GRANTED'}")
+
     if drift["prior_path"]:
+        print()
         print(f"prior trusted path: {drift['prior_path']}")
         print(f"prior sha256:       {drift['prior_hash'][:16] if drift['prior_hash'] else '?'}...")
         if drift["drifted"]:
             print("WARNING: trust may have been silently revoked.")
-            print("         Re-grant Accessibility access to the binary at:")
-            print(f"             {INSTALL_PATH}")
+            print("         The .app bundle's binary changed since the last grant.")
+            print("         Re-grant Accessibility access to:")
+            print(f"             {_display(APP_BUNDLE_PATH)}")
         else:
             print("trust state:        unchanged since last run")
 
-    install_exists = INSTALL_PATH.exists()
-    print(
-        f"install ({INSTALL_PATH}): "
-        f"{'present' if install_exists else 'MISSING — run `peek-mcp install`'}"
-    )
-
     user_dl = denylist.user_denylist_path()
+    print()
     print(f"user denylist:      {user_dl} {'(present)' if user_dl.exists() else '(will be installed on first run)'}")
+
+    if not bundle_present:
+        print()
+        print("The Peek.app bundle is not installed yet.")
+        print("Build the bundle then install it:")
+        print("    ./build.sh && ./dist/peek-mcp install")
+        return 1
 
     if not trusted:
         print()
-        print("Opening System Settings → Privacy & Security → Accessibility...")
-        print(f"Add the binary path to the list: {INSTALL_PATH}")
+        print("Opening System Settings -> Privacy & Security -> Accessibility...")
+        print(f"Drag {_display(APP_BUNDLE_PATH)} into the list (or click + and select it).")
         permissions.open_settings_pane()
         return 1
 
@@ -170,13 +215,43 @@ def cmd_read(args: argparse.Namespace) -> int:
 # --- install --------------------------------------------------------------
 
 
-def cmd_install(args: argparse.Namespace) -> int:
-    """Copy the running PyInstaller binary to ~/.local/bin/peek-mcp.
+def _resolve_source_bundle() -> Path | None:
+    """Find the Peek.app to install, given how this binary was launched.
 
-    Frozen-mode only: AX trust must attach to the actual Mach-O binary,
-    so we refuse to "install" from a dev-mode Python interpreter.
+    Two valid launch contexts:
+
+    1. Running from inside an existing Peek.app — the binary is at
+       ``<bundle>/Contents/MacOS/peek-mcp``. Walk up from
+       ``sys.executable`` looking for a ``.app`` ancestor.
+    2. Running from a freshly-built ``dist/peek-mcp`` raw binary —
+       the sibling ``dist/Peek.app`` is the bundle to install.
+
+    Returns the bundle Path on success, or ``None`` if neither applies.
     """
-    target = Path(args.path).expanduser() if args.path else INSTALL_PATH
+    exe = Path(sys.executable).resolve()
+
+    # Case 1: walk up looking for a *.app ancestor whose Contents/MacOS
+    # directory contains us. This makes "install from the installed
+    # bundle" a no-op that still drops/refreshes the symlink.
+    for ancestor in exe.parents:
+        if ancestor.suffix == ".app" and ancestor.is_dir():
+            return ancestor
+
+    # Case 2: dist/peek-mcp + sibling dist/Peek.app
+    sibling = exe.parent / "Peek.app"
+    if sibling.is_dir():
+        return sibling
+
+    return None
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    """Install the Peek.app bundle to ~/Applications and create the CLI symlink.
+
+    Frozen-mode only: AX trust must attach to the actual Mach-O binary
+    inside a .app bundle, so we refuse to "install" from a dev-mode
+    Python interpreter.
+    """
     is_frozen = bool(getattr(sys, "frozen", False))
     if not is_frozen:
         print(
@@ -184,39 +259,70 @@ def cmd_install(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         print(
-            "       build the binary first via ./build.sh, then run "
+            "       Build the .app first via ./build.sh, then run "
             "`./dist/peek-mcp install`.",
             file=sys.stderr,
         )
         return 2
 
-    source = Path(sys.executable).resolve()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    # Resolve through symlinks for the equality check, but always remove
-    # any existing entry (regular file or symlink) at the literal target
-    # path before copying. Otherwise shutil.copy2 would follow a stale
-    # symlink (e.g. from a prior `uv tool install`) and write into the
-    # symlink's target — leaving the install path as a symlink to a
-    # different binary, which would break AX trust assumptions.
-    same_path = False
+    source_bundle = _resolve_source_bundle()
+    if source_bundle is None:
+        print(
+            "error: could not locate a Peek.app bundle to install.",
+            file=sys.stderr,
+        )
+        print(
+            "       Build the .app first via ./build.sh, then run "
+            "`./dist/peek-mcp install`.",
+            file=sys.stderr,
+        )
+        return 2
+
+    target_bundle = (
+        Path(args.path).expanduser() if args.path else APP_BUNDLE_PATH
+    )
+    target_bundle.parent.mkdir(parents=True, exist_ok=True)
+
+    # If we're already running from inside the target bundle (the
+    # "re-install from installed copy" path), there's nothing to copy —
+    # just refresh the symlink.
+    same_bundle = False
     try:
-        same_path = source.resolve() == target.resolve()
+        same_bundle = source_bundle.resolve() == target_bundle.resolve()
     except FileNotFoundError:
-        same_path = False
-    if same_path:
-        print(f"already installed at: {target}")
+        same_bundle = False
+
+    if same_bundle:
+        print(f"already installed at: {_display(target_bundle)}")
     else:
-        if target.is_symlink() or target.exists():
-            target.unlink()
-        shutil.copy2(source, target)
-        print(f"installed: {target}")
-    target.chmod(0o700)  # rwx user only; AX-trusted binary, no group/other access
+        # Wipe-and-copy: a stale Contents/MacOS/peek-mcp from a prior
+        # install would otherwise be retained by copytree's
+        # dirs_exist_ok merge semantics.
+        if target_bundle.exists() or target_bundle.is_symlink():
+            if target_bundle.is_symlink() or target_bundle.is_file():
+                target_bundle.unlink()
+            else:
+                shutil.rmtree(target_bundle)
+        shutil.copytree(source_bundle, target_bundle, symlinks=True)
+        print(f"installed: {_display(target_bundle)}")
+
+    # CLI symlink. Replace any existing entry (regular file or symlink)
+    # at the literal target path before recreating.
+    target_binary = target_bundle / "Contents" / "MacOS" / "peek-mcp"
+    CLI_SYMLINK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if CLI_SYMLINK_PATH.is_symlink() or CLI_SYMLINK_PATH.exists():
+        CLI_SYMLINK_PATH.unlink()
+    CLI_SYMLINK_PATH.symlink_to(target_binary)
+    print(
+        f"symlink:   {_display(CLI_SYMLINK_PATH)} -> {_display(target_binary)}"
+    )
+
     print()
-    print("Next step: grant Accessibility access to this exact path:")
-    print(f"  {target}")
-    print("In System Settings → Privacy & Security → Accessibility, click +")
-    print("and select the binary. (Spotlight won't find it — use Cmd+Shift+G")
-    print("in the file picker and paste the path.)")
+    print("Next steps:")
+    print("  1. Open System Settings -> Privacy & Security -> Accessibility.")
+    print(f"  2. Click + and select Peek.app from Applications (or drag {_display(target_bundle)} in).")
+    print("  3. Enable the toggle.")
+    print("  4. Run: peek-mcp doctor")
     return 0
 
 
@@ -227,7 +333,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="peek", description="macos-peek-mcp CLI")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    p_doctor = sub.add_parser("doctor", help="Check AX trust state and binary hash")
+    p_doctor = sub.add_parser("doctor", help="Check AX trust state and bundle hash")
     p_doctor.set_defaults(func=cmd_doctor)
 
     p_list = sub.add_parser("list", help="List visible windows")
@@ -258,9 +364,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_install = sub.add_parser(
         "install",
-        help=f"Copy this binary to {INSTALL_PATH} (the AX-trusted path)",
+        help=(
+            f"Install Peek.app to {_display(APP_BUNDLE_PATH)} "
+            f"and create CLI symlink at {_display(CLI_SYMLINK_PATH)}"
+        ),
     )
-    p_install.add_argument("--path", help=f"Override install location (default {INSTALL_PATH})")
+    p_install.add_argument(
+        "--path",
+        help=f"Override .app install location (default {_display(APP_BUNDLE_PATH)})",
+    )
     p_install.set_defaults(func=cmd_install)
 
     return p
