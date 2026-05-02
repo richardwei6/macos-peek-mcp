@@ -27,13 +27,34 @@ All returned text is wrapped in `<window_text source="..." trust="untrusted">…
 
 ## Quick start
 
-Requires macOS 13+, Python 3.11+, [`uv`](https://docs.astral.sh/uv/), and the Apple command line tools (for `codesign`).
+Requires macOS 13+, [`uv`](https://docs.astral.sh/uv/), and the Apple command line tools (for `git` and `codesign`).
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/richardwei6/macos-peek-mcp/main/install.sh | bash
+```
+
+The installer clones the repo to `~/.local/share/macos-peek-mcp/src`, builds the single-file Mach-O binary with PyInstaller (~1–2 min on first run), ad-hoc-codesigns it, and copies it to `~/.local/bin/peek-mcp`. Re-running updates the source and rebuilds.
+
+If you'd rather inspect the script before piping to bash:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/richardwei6/macos-peek-mcp/main/install.sh -o install.sh
+less install.sh
+bash install.sh
+```
+
+Or do it by hand:
 
 ```bash
 git clone https://github.com/richardwei6/macos-peek-mcp.git
 cd macos-peek-mcp
 ./build.sh                      # build + ad-hoc-sign dist/peek-mcp (~20 MB)
 ./dist/peek-mcp install         # copy binary to ~/.local/bin/peek-mcp
+```
+
+After the binary is installed, run:
+
+```bash
 peek-mcp doctor                 # opens System Settings → grant AX, then re-run
 ```
 
