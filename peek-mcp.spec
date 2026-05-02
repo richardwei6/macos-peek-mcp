@@ -75,3 +75,36 @@ exe = EXE(
     entitlements_file=None,
     onefile=True,
 )
+
+
+# Wrap the EXE into a proper macOS .app bundle. Modern macOS TCC keys
+# Accessibility trust on bundle ID + bundle cdhash; the Privacy &
+# Security → Accessibility pane is built around .app bundles, so
+# shipping one is what makes the entry show up natively in the list
+# (drag-and-drop from ~/Applications, no Cmd+Shift+G required).
+#
+# The standalone EXE above is still emitted at dist/peek-mcp for dev /
+# testing convenience; the user-facing artifact is dist/Peek.app.
+app = BUNDLE(
+    exe,
+    name="Peek.app",
+    icon=None,
+    bundle_identifier="com.richardwei6.macos-peek-mcp",
+    info_plist={
+        "CFBundleName": "Peek",
+        "CFBundleDisplayName": "Peek",
+        "CFBundleExecutable": "peek-mcp",
+        "CFBundleIdentifier": "com.richardwei6.macos-peek-mcp",
+        "CFBundlePackageType": "APPL",
+        "CFBundleShortVersionString": "0.1.0",
+        "CFBundleVersion": "0.1.0",
+        # daemon-style: no Dock icon, no menu bar entry
+        "LSUIElement": True,
+        "NSAccessibilityUsageDescription": (
+            "macos-peek-mcp reads text from other windows on your behalf "
+            "to expose to MCP clients (e.g. Claude Code). You will be "
+            "prompted for Accessibility access."
+        ),
+        "LSMinimumSystemVersion": "13.0",
+    },
+)
