@@ -1,25 +1,27 @@
-"""Unit tests for `peek.permissions._interpreter_path` precedence.
+"""Unit tests for `peek.permissions._interpreter_path` precedence
+plus `peek.cli` sudo-aware helpers.
 
 The trusted-artifact path determines what AX trust drift is computed
 against. Three cases the function must handle, in order:
 
-  1. The installed bundle binary at ``~/Applications/Peek.app/Contents/MacOS/peek-mcp``
+  1. The installed bundle binary at ``/Applications/Peek.app/Contents/MacOS/peek-mcp``
      is present -> hash that.
   2. Bundle missing, ``sys.executable`` looks like a freshly-built
      ``dist/peek-mcp`` -> hash ``sys.executable``.
   3. Neither -> fall back to ``sys.executable`` (dev mode).
 
 All paths are tmp_path / monkeypatch-driven; we never touch the user's
-real ``~/Applications`` or interpreter.
+real ``/Applications`` or interpreter.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
-from peek import permissions
+from peek import cli, permissions
 
 
 def _make_bundle(tmp_path: Path) -> Path:
@@ -87,3 +89,93 @@ def test_interpreter_path_dev_mode_returns_sys_executable(
     monkeypatch.setattr("peek.permissions.sys.executable", str(venv_python))
 
     assert permissions._interpreter_path() == str(venv_python)
+
+
+# --- module-level constant smoke check -------------------------------------
+
+
+def test_app_bundle_path_is_system_applications() -> None:
+    """The installer must default to /Applications/, not ~/Applications/.
+
+    macOS's Privacy & Security file picker opens to /Applications/, and
+    ~/Applications/ isn't in the default Spotlight scope, so users
+    can't find the bundle there.
+    """
+    assert permissions.APP_BUNDLE_PATH == Path("/Applications/Peek.app")
+    assert permissions.BUNDLE_BINARY_PATH == Path(
+        "/Applications/Peek.app/Contents/MacOS/peek-mcp"
+    )
+
+
+# --- cli sudo-aware helpers ------------------------------------------------
+
+
+def test_user_home_no_sudo_returns_path_home(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SUDO_USER", raising=False)
+    assert cli._user_home() == Path.home()
+
+
+def test_user_home_under_sudo_returns_invoking_user_home(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When SUDO_USER is set, _user_home should return their pw_dir."""
+    import pwd as _pwd
+
+    real = _pwd.getpwuid(os.getuid())
+    monkeypatch.setenv("SUDO_USER", real.pw_name)
+    # Even though Path.home() under real sudo would be /var/root, in
+    # this process we just want to confirm the lookup uses SUDO_USER.
+    assert cli._user_home() == Path(real.pw_dir)
+
+
+def test_user_home_unknown_sudo_user_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SUDO_USER", "definitely-not-a-real-user-abc123xyz")
+    assert cli._user_home() == Path.home()
+
+
+def test_user_uid_gid_no_sudo_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SUDO_USER", raising=False)
+    assert cli._user_uid_gid() is None
+
+
+def test_user_uid_gid_under_sudo_returns_uid_gid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pwd as _pwd
+
+    real = _pwd.getpwuid(os.getuid())
+    monkeypatch.setenv("SUDO_USER", real.pw_name)
+    assert cli._user_uid_gid() == (real.pw_uid, real.pw_gid)
+
+
+def test_user_uid_gid_unknown_sudo_user_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SUDO_USER", "definitely-not-a-real-user-abc123xyz")
+    assert cli._user_uid_gid() is None
+
+
+def test_cli_symlink_path_uses_user_home(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SUDO_USER", raising=False)
+    assert cli._cli_symlink_path() == Path.home() / ".local" / "bin" / "peek-mcp"
+
+
+def test_ensure_dir_owned_by_user_creates_path(tmp_path: Path) -> None:
+    """Without an owner, the helper still mkdir -p's the target."""
+    target = tmp_path / "a" / "b" / "c"
+    cli._ensure_dir_owned_by_user(target, None)
+    assert target.is_dir()
+
+
+def test_ensure_dir_owned_by_user_idempotent_on_existing(tmp_path: Path) -> None:
+    """When path already exists we shouldn't try to chown anything."""
+    cli._ensure_dir_owned_by_user(tmp_path, None)
+    assert tmp_path.is_dir()

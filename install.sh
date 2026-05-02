@@ -6,7 +6,7 @@
 #
 # Clones the repo, builds the Peek.app bundle (and a raw Mach-O binary)
 # with PyInstaller, ad-hoc-codesigns both, installs the bundle to
-# ~/Applications/Peek.app, and creates a CLI symlink at
+# /Applications/Peek.app (one sudo prompt), and creates a CLI symlink at
 # ~/.local/bin/peek-mcp. Idempotent — re-running updates source and rebuilds.
 
 set -euo pipefail
@@ -14,7 +14,7 @@ set -euo pipefail
 REPO_URL="https://github.com/richardwei6/macos-peek-mcp.git"
 INSTALL_DIR="${HOME}/.local/share/macos-peek-mcp"
 SRC_DIR="${INSTALL_DIR}/src"
-BUNDLE_PATH="${HOME}/Applications/Peek.app"
+BUNDLE_PATH="/Applications/Peek.app"
 BIN_PATH="${HOME}/.local/bin/peek-mcp"
 
 # --- output helpers ---------------------------------------------------------
@@ -84,7 +84,12 @@ ok "built dist/Peek.app (${APP_SIZE})"
 
 # --- install ----------------------------------------------------------------
 info "installing Peek.app to $BUNDLE_PATH and CLI symlink to $BIN_PATH"
-./dist/peek-mcp install
+if [ -w /Applications ]; then
+    ./dist/peek-mcp install
+else
+    warn "/Applications/ requires sudo. You may be prompted for your password."
+    sudo ./dist/peek-mcp install
+fi
 ok "installed"
 
 # --- next steps -------------------------------------------------------------
@@ -99,7 +104,8 @@ echo ""
 echo "     It opens System Settings to the right pane on first run."
 echo ""
 echo "  2. In System Settings -> Privacy & Security -> Accessibility,"
-echo "     click + and select Peek.app from your Applications folder."
+echo "     click + -- the file picker opens to /Applications/ by default,"
+echo "     where Peek.app now lives. Select it."
 echo "     (Or drag $BUNDLE_PATH into the list.)"
 echo ""
 echo "     Enable the toggle. Re-run \`peek-mcp doctor\` -- should report GRANTED."

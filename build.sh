@@ -5,9 +5,9 @@
 #   dist/peek-mcp   single-file Mach-O, ad-hoc signed (raw binary, dev only)
 #   dist/Peek.app   .app bundle wrapping that binary, ad-hoc signed
 #
-# Next: ./dist/peek-mcp install
-#   copies the bundle to ~/Applications/Peek.app and drops a CLI
-#   symlink at ~/.local/bin/peek-mcp -> the bundle's binary.
+# Next: sudo ./dist/peek-mcp install
+#   copies the bundle to /Applications/Peek.app (sudo for /Applications/)
+#   and drops a CLI symlink at ~/.local/bin/peek-mcp -> the bundle's binary.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -39,4 +39,4 @@ echo ""
 echo "Built dist/Peek.app   ($(du -sh dist/Peek.app | cut -f1))"
 echo "Built dist/peek-mcp   ($(du -sh dist/peek-mcp | cut -f1), raw binary, dev only)"
 echo ""
-echo "Run: ./dist/peek-mcp install   # installs Peek.app to ~/Applications/, creates ~/.local/bin/peek-mcp symlink"
+echo "Run: sudo ./dist/peek-mcp install   # installs Peek.app to /Applications/, creates ~/.local/bin/peek-mcp symlink"

@@ -2,7 +2,7 @@
 
 Used for manual development against the live AX API and to install the
 PyInstaller-built ``Peek.app`` bundle at the stable path AX trust is
-granted to (``~/Applications/Peek.app``), plus a CLI symlink at
+granted to (``/Applications/Peek.app``), plus a CLI symlink at
 ``~/.local/bin/peek-mcp`` for ergonomics.
 """
 
@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
+import pwd
 import shutil
 import sys
 from pathlib import Path
@@ -19,14 +21,61 @@ from peek import denylist, permissions, server, windows
 from peek.permissions import (
     APP_BUNDLE_PATH,
     BUNDLE_BINARY_PATH,
-    CLI_SYMLINK_PATH,
 )
 
 
+def _user_home() -> Path:
+    """Return invoking user's home, even when running under sudo."""
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        try:
+            return Path(pwd.getpwnam(sudo_user).pw_dir)
+        except KeyError:
+            pass
+    return Path.home()
+
+
+def _user_uid_gid() -> tuple[int, int] | None:
+    """Return (uid, gid) of the invoking user when running under sudo, else None."""
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        try:
+            pw = pwd.getpwnam(sudo_user)
+            return (pw.pw_uid, pw.pw_gid)
+        except KeyError:
+            pass
+    return None
+
+
+def _cli_symlink_path() -> Path:
+    """Resolve the CLI symlink path against the invoking user's $HOME.
+
+    Under sudo, ``Path.home()`` returns ``/var/root``; the user's actual
+    bin dir lives under ``SUDO_USER``'s home.
+    """
+    return _user_home() / ".local" / "bin" / "peek-mcp"
+
+
+def _ensure_dir_owned_by_user(path: Path, owner: tuple[int, int] | None) -> None:
+    """mkdir -p path. Chown to owner only directories we just created."""
+    created: list[Path] = []
+    p = path
+    while not p.exists():
+        created.append(p)
+        p = p.parent
+    path.mkdir(parents=True, exist_ok=True)
+    if owner:
+        for d in created:
+            try:
+                os.chown(d, owner[0], owner[1])
+            except OSError:
+                pass  # best-effort
+
+
 def _display(p: Path) -> str:
-    """Render a path with ``~`` for the home prefix when applicable."""
+    """Render a path with ``~`` for the invoking user's home prefix."""
     s = str(p)
-    home = str(Path.home())
+    home = str(_user_home())
     if s == home:
         return "~"
     if s.startswith(home + "/"):
@@ -43,9 +92,10 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
 
     trusted = permissions.is_trusted()
 
+    cli_symlink = _cli_symlink_path()
     bundle_present = APP_BUNDLE_PATH.exists()
     binary_present = BUNDLE_BINARY_PATH.exists()
-    symlink_present = CLI_SYMLINK_PATH.is_symlink() or CLI_SYMLINK_PATH.exists()
+    symlink_present = cli_symlink.is_symlink() or cli_symlink.exists()
 
     print(
         f"app bundle:        {_display(APP_BUNDLE_PATH)}  "
@@ -65,7 +115,7 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
         )
 
     print(
-        f"cli symlink:       {_display(CLI_SYMLINK_PATH)}  "
+        f"cli symlink:       {_display(cli_symlink)}  "
         f"[{'present' if symlink_present else 'MISSING'}]"
     )
 
@@ -246,11 +296,16 @@ def _resolve_source_bundle() -> Path | None:
 
 
 def cmd_install(args: argparse.Namespace) -> int:
-    """Install the Peek.app bundle to ~/Applications and create the CLI symlink.
+    """Install the Peek.app bundle to /Applications and create the CLI symlink.
 
     Frozen-mode only: AX trust must attach to the actual Mach-O binary
     inside a .app bundle, so we refuse to "install" from a dev-mode
     Python interpreter.
+
+    Writing to ``/Applications/`` requires root, so the user is expected
+    to invoke this via sudo. We honor ``SUDO_USER`` for the symlink
+    target (their home, not ``/var/root``) and chown anything we create
+    under their home back to them.
     """
     is_frozen = bool(getattr(sys, "frozen", False))
     if not is_frozen:
@@ -281,46 +336,64 @@ def cmd_install(args: argparse.Namespace) -> int:
     target_bundle = (
         Path(args.path).expanduser() if args.path else APP_BUNDLE_PATH
     )
-    target_bundle.parent.mkdir(parents=True, exist_ok=True)
 
-    # If we're already running from inside the target bundle (the
-    # "re-install from installed copy" path), there's nothing to copy —
-    # just refresh the symlink.
-    same_bundle = False
+    owner = _user_uid_gid()  # (uid, gid) under sudo, else None
+    cli_symlink = _cli_symlink_path()
+
     try:
-        same_bundle = source_bundle.resolve() == target_bundle.resolve()
-    except FileNotFoundError:
-        same_bundle = False
+        target_bundle.parent.mkdir(parents=True, exist_ok=True)
 
-    if same_bundle:
-        print(f"already installed at: {_display(target_bundle)}")
-    else:
-        # Wipe-and-copy: a stale Contents/MacOS/peek-mcp from a prior
-        # install would otherwise be retained by copytree's
-        # dirs_exist_ok merge semantics.
-        if target_bundle.exists() or target_bundle.is_symlink():
-            if target_bundle.is_symlink() or target_bundle.is_file():
-                target_bundle.unlink()
-            else:
-                shutil.rmtree(target_bundle)
-        shutil.copytree(source_bundle, target_bundle, symlinks=True)
-        print(f"installed: {_display(target_bundle)}")
+        # If we're already running from inside the target bundle (the
+        # "re-install from installed copy" path), there's nothing to copy —
+        # just refresh the symlink.
+        same_bundle = False
+        try:
+            same_bundle = source_bundle.resolve() == target_bundle.resolve()
+        except FileNotFoundError:
+            same_bundle = False
+
+        if same_bundle:
+            print(f"already installed at: {target_bundle}")
+        else:
+            # Wipe-and-copy: a stale Contents/MacOS/peek-mcp from a prior
+            # install would otherwise be retained by copytree's
+            # dirs_exist_ok merge semantics.
+            if target_bundle.exists() or target_bundle.is_symlink():
+                if target_bundle.is_symlink() or target_bundle.is_file():
+                    target_bundle.unlink()
+                else:
+                    shutil.rmtree(target_bundle)
+            shutil.copytree(source_bundle, target_bundle, symlinks=True)
+            print(f"installed: {target_bundle}")
+    except PermissionError:
+        print(
+            f"error: cannot write to {target_bundle.parent} (permission denied).",
+            file=sys.stderr,
+        )
+        print("       Re-run with sudo:", file=sys.stderr)
+        print("", file=sys.stderr)
+        print(f"           sudo {sys.executable} install", file=sys.stderr)
+        return 1
 
     # CLI symlink. Replace any existing entry (regular file or symlink)
-    # at the literal target path before recreating.
+    # at the literal target path before recreating. Chown freshly-created
+    # parent dirs to the invoking user so they aren't left root-owned.
     target_binary = target_bundle / "Contents" / "MacOS" / "peek-mcp"
-    CLI_SYMLINK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if CLI_SYMLINK_PATH.is_symlink() or CLI_SYMLINK_PATH.exists():
-        CLI_SYMLINK_PATH.unlink()
-    CLI_SYMLINK_PATH.symlink_to(target_binary)
-    print(
-        f"symlink:   {_display(CLI_SYMLINK_PATH)} -> {_display(target_binary)}"
-    )
+    _ensure_dir_owned_by_user(cli_symlink.parent, owner)
+    if cli_symlink.is_symlink() or cli_symlink.exists():
+        cli_symlink.unlink()
+    cli_symlink.symlink_to(target_binary)
+    if owner:
+        try:
+            os.lchown(cli_symlink, owner[0], owner[1])
+        except OSError:
+            pass  # best-effort
+    print(f"symlink:   {cli_symlink} -> {target_binary}")
 
     print()
     print("Next steps:")
     print("  1. Open System Settings -> Privacy & Security -> Accessibility.")
-    print(f"  2. Click + and select Peek.app from Applications (or drag {_display(target_bundle)} in).")
+    print(f"  2. Click + and select Peek.app from Applications (or drag {target_bundle} in).")
     print("  3. Enable the toggle.")
     print("  4. Run: peek-mcp doctor")
     return 0
@@ -365,13 +438,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p_install = sub.add_parser(
         "install",
         help=(
-            f"Install Peek.app to {_display(APP_BUNDLE_PATH)} "
-            f"and create CLI symlink at {_display(CLI_SYMLINK_PATH)}"
+            f"Install Peek.app to {APP_BUNDLE_PATH} "
+            f"and create CLI symlink at {_display(_cli_symlink_path())} "
+            f"(requires sudo for /Applications/)"
         ),
     )
     p_install.add_argument(
         "--path",
-        help=f"Override .app install location (default {_display(APP_BUNDLE_PATH)})",
+        help=f"Override .app install location (default {APP_BUNDLE_PATH})",
     )
     p_install.set_defaults(func=cmd_install)
 

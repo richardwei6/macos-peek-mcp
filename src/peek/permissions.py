@@ -7,7 +7,7 @@ Two responsibilities:
    System Settings pane on first failure.
 2. Persist the path + sha256 of the binary inside the .app bundle the
    user granted trust to (the Mach-O at
-   ``~/Applications/Peek.app/Contents/MacOS/peek-mcp``, placed there by
+   ``/Applications/Peek.app/Contents/MacOS/peek-mcp``, placed there by
    ``peek install``). On every subsequent call, diff against the
    persisted record so we can warn when the bundle's binary has been
    replaced (e.g., a rebuild) and AX trust must be re-granted.
@@ -46,7 +46,7 @@ STATE_FILENAME = "state.json"
 # the bundle's CFBundleIdentifier; drift detection hashes
 # BUNDLE_BINARY_PATH (when present) so we can warn when the bundle has
 # been replaced (e.g. by a rebuild) and trust must be re-granted.
-APP_BUNDLE_PATH = Path.home() / "Applications" / "Peek.app"
+APP_BUNDLE_PATH = Path("/Applications/Peek.app")
 BUNDLE_BINARY_PATH = APP_BUNDLE_PATH / "Contents" / "MacOS" / "peek-mcp"
 CLI_SYMLINK_PATH = Path.home() / ".local" / "bin" / "peek-mcp"
 
@@ -134,7 +134,7 @@ def _interpreter_path() -> str:
     """Return the path of the trusted artifact whose hash we persist.
 
     The user grants AX trust to the .app bundle at
-    ``~/Applications/Peek.app``. The kernel records the cdhash of the
+    ``/Applications/Peek.app``. The kernel records the cdhash of the
     Mach-O at ``Contents/MacOS/peek-mcp``, so that's the meaningful
     artifact for drift detection.
 
