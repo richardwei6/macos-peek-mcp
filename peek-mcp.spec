@@ -7,8 +7,9 @@
 #   granted to the venv Python interpreter, which uv re-signs on
 #   upgrade (silent revoke) and which has a wide blast radius (any tool
 #   that uses the same interpreter inherits AX). Shipping a single
-#   ad-hoc-signed Mach-O binary makes the AX grant target the real,
-#   stable artifact.
+#   Mach-O binary (codesigned by build.sh with the user's local Apple
+#   Development identity) makes the AX grant target the real, stable
+#   artifact.
 #
 # Dispatch:
 #   `peek-mcp` (no args)                  -> peek.entry.main -> server.main
