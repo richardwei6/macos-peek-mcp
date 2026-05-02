@@ -215,7 +215,7 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
         print()
         print("The Peek.app bundle is not installed yet.")
         print("Build the bundle then install it:")
-        print("    ./build.sh && ./dist/peek-mcp install")
+        print("    ./build.sh && ./dist/Peek.app/Contents/MacOS/peek-mcp install")
         return 1
 
     if not trusted:
@@ -346,25 +346,28 @@ def _resolve_source_bundle() -> Path | None:
 
     1. Running from inside an existing Peek.app — the binary is at
        ``<bundle>/Contents/MacOS/peek-mcp``. Walk up from
-       ``sys.executable`` looking for a ``.app`` ancestor.
-    2. Running from a freshly-built ``dist/peek-mcp`` raw binary —
-       the sibling ``dist/Peek.app`` is the bundle to install.
+       ``sys.executable`` looking for a ``.app`` ancestor. This makes
+       "install from the installed bundle" a no-op that still drops or
+       refreshes the symlink.
+    2. Running from the freshly-built --onedir output at
+       ``dist/peek-mcp/peek-mcp``. The sibling ``dist/Peek.app`` is the
+       bundle to install — same parent ``dist/`` directory.
 
     Returns the bundle Path on success, or ``None`` if neither applies.
     """
     exe = Path(sys.executable).resolve()
 
-    # Case 1: walk up looking for a *.app ancestor whose Contents/MacOS
-    # directory contains us. This makes "install from the installed
-    # bundle" a no-op that still drops/refreshes the symlink.
+    # Case 1: walk up looking for a *.app ancestor.
     for ancestor in exe.parents:
         if ancestor.suffix == ".app" and ancestor.is_dir():
             return ancestor
 
-    # Case 2: dist/peek-mcp + sibling dist/Peek.app
-    sibling = exe.parent / "Peek.app"
-    if sibling.is_dir():
-        return sibling
+    # Case 2: --onedir output. exe is dist/peek-mcp/peek-mcp, so
+    # exe.parent is dist/peek-mcp/, and the bundle is dist/Peek.app —
+    # i.e. cousin via the dist/ directory two levels up.
+    onedir_sibling = exe.parent.parent / "Peek.app"
+    if onedir_sibling.is_dir():
+        return onedir_sibling
 
     return None
 
@@ -389,7 +392,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         )
         print(
             "       Build the .app first via ./build.sh, then run "
-            "`./dist/peek-mcp install`.",
+            "`./dist/Peek.app/Contents/MacOS/peek-mcp install`.",
             file=sys.stderr,
         )
         return 2
@@ -402,7 +405,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         )
         print(
             "       Build the .app first via ./build.sh, then run "
-            "`./dist/peek-mcp install`.",
+            "`./dist/Peek.app/Contents/MacOS/peek-mcp install`.",
             file=sys.stderr,
         )
         return 2

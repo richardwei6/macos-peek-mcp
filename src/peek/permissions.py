@@ -141,11 +141,10 @@ def _interpreter_path() -> str:
     Precedence:
       1. ``BUNDLE_BINARY_PATH`` if present — the installed bundle's
          binary, which is what TCC actually checks.
-      2. ``sys.executable`` if it looks like the dev ``dist/peek-mcp``
-         (running the freshly-built single-file binary before install).
-      3. ``sys.executable`` fallback for dev mode (running via
-         ``python -m peek`` or under uv) so drift detection still
-         gives a signal in development.
+      2. ``sys.executable`` fallback — covers running from the
+         freshly-built ``dist/peek-mcp/peek-mcp`` (--onedir output)
+         before install, and dev mode via ``python -m peek`` or uv.
+         Either way drift detection still gives a signal.
     """
     if BUNDLE_BINARY_PATH.exists():
         return str(BUNDLE_BINARY_PATH)

@@ -6,9 +6,9 @@ against. Three cases the function must handle, in order:
 
   1. The installed bundle binary at ``/Applications/Peek.app/Contents/MacOS/peek-mcp``
      is present -> hash that.
-  2. Bundle missing, ``sys.executable`` looks like a freshly-built
-     ``dist/peek-mcp`` -> hash ``sys.executable``.
-  3. Neither -> fall back to ``sys.executable`` (dev mode).
+  2. Bundle missing -> hash ``sys.executable`` (covers running from the
+     freshly-built ``dist/peek-mcp/peek-mcp`` --onedir output, and dev
+     mode via ``python -m peek`` / uv).
 
 All paths are tmp_path / monkeypatch-driven; we never touch the user's
 real ``/Applications`` or interpreter.

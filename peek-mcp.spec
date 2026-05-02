@@ -53,13 +53,24 @@ a = Analysis(
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 
+# --onedir mode (exclude_binaries=True, paired with COLLECT below).
+#
+# Why not --onefile: PyInstaller's onefile bootloader extracts the
+# bundle's payload to /var/folders/.../_MEIxxxxx/ at startup and
+# re-execs from there. macOS TCC (Accessibility) on Sonoma 14.4+ and
+# Sequoia matches the running process's bundle context strictly — once
+# the binary re-execs from the temp dir, it's no longer "inside"
+# /Applications/Peek.app from the kernel's POV, and the AX grant
+# silently fails to apply.
+#
+# In --onedir mode, the running binary IS the bundle's binary at
+# dist/Peek.app/Contents/MacOS/peek-mcp (no extraction, no re-exec),
+# which is what TCC expects.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="peek-mcp",
     debug=False,
     bootloader_ignore_signals=False,
@@ -73,20 +84,28 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    onefile=True,
 )
 
 
-# Wrap the EXE into a proper macOS .app bundle. Modern macOS TCC keys
-# Accessibility trust on bundle ID + bundle cdhash; the Privacy &
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="peek-mcp",
+)
+
+
+# Wrap the COLLECT into a proper macOS .app bundle. Modern macOS TCC
+# keys Accessibility trust on bundle ID + bundle cdhash; the Privacy &
 # Security → Accessibility pane is built around .app bundles, so
 # shipping one is what makes the entry show up natively in the list
-# (drag-and-drop from ~/Applications, no Cmd+Shift+G required).
-#
-# The standalone EXE above is still emitted at dist/peek-mcp for dev /
-# testing convenience; the user-facing artifact is dist/Peek.app.
+# (drag-and-drop from /Applications, no Cmd+Shift+G required).
 app = BUNDLE(
-    exe,
+    coll,
     name="Peek.app",
     icon=None,
     bundle_identifier="com.richardwei6.macos-peek-mcp",

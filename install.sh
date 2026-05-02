@@ -4,10 +4,10 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/richardwei6/macos-peek-mcp/main/install.sh | bash
 #
-# Clones the repo, builds the Peek.app bundle (and a raw Mach-O binary)
-# with PyInstaller, ad-hoc-codesigns both, installs the bundle to
-# /Applications/Peek.app (one sudo prompt), and creates a CLI symlink at
-# ~/.local/bin/peek-mcp. Idempotent — re-running updates source and rebuilds.
+# Clones the repo, builds the Peek.app bundle with PyInstaller (--onedir),
+# ad-hoc-codesigns it, installs the bundle to /Applications/Peek.app
+# (one sudo prompt), and creates a CLI symlink at ~/.local/bin/peek-mcp.
+# Idempotent — re-running updates source and rebuilds.
 
 set -euo pipefail
 
@@ -85,13 +85,13 @@ ok "built dist/Peek.app (${APP_SIZE})"
 # --- install ----------------------------------------------------------------
 info "installing Peek.app to $BUNDLE_PATH and CLI symlink to $BIN_PATH"
 if [ -w /Applications ]; then
-    ./dist/peek-mcp install
+    ./dist/Peek.app/Contents/MacOS/peek-mcp install
 else
     warn "/Applications/ requires sudo. You may be prompted for your password."
-    sudo ./dist/peek-mcp install
+    sudo ./dist/Peek.app/Contents/MacOS/peek-mcp install
 fi
 ok "installed"
-info "Auto-configured peek in ~/.claude.json (skip with: ./dist/peek-mcp install --skip-claude-config)"
+info "Auto-configured peek in ~/.claude.json (skip with: ./dist/Peek.app/Contents/MacOS/peek-mcp install --skip-claude-config)"
 
 # --- next steps -------------------------------------------------------------
 echo ""

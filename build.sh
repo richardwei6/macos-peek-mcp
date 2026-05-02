@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# Build the peek-mcp Mach-O binary AND the Peek.app bundle via PyInstaller.
+# Build the Peek.app bundle (PyInstaller --onedir) and ad-hoc-codesign it.
 #
-# Outputs:
-#   dist/peek-mcp   single-file Mach-O, ad-hoc signed (raw binary, dev only)
-#   dist/Peek.app   .app bundle wrapping that binary, ad-hoc signed
+# Output:
+#   dist/Peek.app   .app bundle, ad-hoc signed.
+#                   Binary at dist/Peek.app/Contents/MacOS/peek-mcp.
 #
-# Next: sudo ./dist/peek-mcp install
+# Why --onedir: macOS TCC (Accessibility) matches on the running
+# process's bundle context. PyInstaller --onefile self-extracts to
+# /var/folders/.../_MEIxxxxx/ and re-execs, breaking that match.
+# --onedir runs the binary in-place inside the .app, so AX trust
+# granted to /Applications/Peek.app actually applies.
+#
+# Next: sudo ./dist/Peek.app/Contents/MacOS/peek-mcp install
 #   copies the bundle to /Applications/Peek.app (sudo for /Applications/)
 #   and drops a CLI symlink at ~/.local/bin/peek-mcp -> the bundle's binary.
 set -euo pipefail
@@ -19,13 +25,8 @@ uv sync --group dev
 # leaves a half-formed Peek.app behind that confuses subsequent builds.
 rm -rf dist build
 
-# Build single-file binary AND Peek.app.
+# Build Peek.app via --onedir + BUNDLE.
 uv run pyinstaller peek-mcp.spec --clean --noconfirm
-
-# Ad-hoc codesign the raw binary so direct invocation isn't refused.
-# AX trust is granted to the .app bundle (see below); this signature on
-# the standalone binary only needs to be valid (not Apple Developer ID).
-codesign --force --sign - --identifier peek-mcp dist/peek-mcp
 
 # Ad-hoc codesign the bundle. The bundle identifier here is what TCC
 # records — keep it in sync with peek-mcp.spec's bundle_identifier.
@@ -37,6 +38,6 @@ codesign --verify --verbose dist/Peek.app
 
 echo ""
 echo "Built dist/Peek.app   ($(du -sh dist/Peek.app | cut -f1))"
-echo "Built dist/peek-mcp   ($(du -sh dist/peek-mcp | cut -f1), raw binary, dev only)"
 echo ""
-echo "Run: sudo ./dist/peek-mcp install   # installs Peek.app to /Applications/, creates ~/.local/bin/peek-mcp symlink"
+echo "Run: sudo ./dist/Peek.app/Contents/MacOS/peek-mcp install"
+echo "     # installs Peek.app to /Applications/, creates ~/.local/bin/peek-mcp symlink"

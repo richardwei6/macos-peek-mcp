@@ -146,7 +146,7 @@ def _ax_permission_error() -> dict[str, Any]:
         "hint": "Grant Accessibility access to the peek-mcp binary",
         "instructions": (
             "Build and install the binary via `./build.sh && "
-            "./dist/peek-mcp install`, then open System Settings → "
+            "./dist/Peek.app/Contents/MacOS/peek-mcp install`, then open System Settings → "
             "Privacy & Security → Accessibility and add the binary at "
             "~/.local/bin/peek-mcp. `peek-mcp doctor` will guide you."
         ),

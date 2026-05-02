@@ -35,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/richardwei6/macos-peek-mcp/main/ins
 
 You'll see one `sudo` prompt — writing to `/Applications/` requires it. The bundle lives there (not under `~/Applications/`) so it shows up in the default *System Settings → Privacy & Security → Accessibility* file picker, which opens to `/Applications/`.
 
-The installer clones the repo to `~/.local/share/macos-peek-mcp/src`, builds the `Peek.app` bundle (and a raw `dist/peek-mcp` Mach-O for dev use) with PyInstaller (~1–2 min on first run), ad-hoc-codesigns both, installs the bundle to `/Applications/Peek.app`, and creates a CLI symlink at `~/.local/bin/peek-mcp` that resolves to the bundle's binary. Re-running updates the source and rebuilds.
+The installer clones the repo to `~/.local/share/macos-peek-mcp/src`, builds the `Peek.app` bundle with PyInstaller in `--onedir` mode (~1–2 min on first run), ad-hoc-codesigns it, installs the bundle to `/Applications/Peek.app`, and creates a CLI symlink at `~/.local/bin/peek-mcp` that resolves to the bundle's binary. Re-running updates the source and rebuilds.
 
 The installer also adds a `peek` entry to `~/.claude.json` automatically — opt out with `--skip-claude-config` if you manage your MCP config yourself.
 
@@ -52,8 +52,8 @@ Or do it by hand:
 ```bash
 git clone https://github.com/richardwei6/macos-peek-mcp.git
 cd macos-peek-mcp
-./build.sh                          # build + ad-hoc-sign dist/Peek.app (and dist/peek-mcp)
-sudo ./dist/peek-mcp install        # install Peek.app to /Applications + ~/.local/bin/peek-mcp symlink
+./build.sh                                              # build + ad-hoc-sign dist/Peek.app
+sudo ./dist/Peek.app/Contents/MacOS/peek-mcp install    # install Peek.app to /Applications + ~/.local/bin/peek-mcp symlink
 ```
 
 After the bundle is installed, run:
@@ -86,7 +86,7 @@ The installer adds this for you. The block written to `~/.claude.json` looks lik
 
 Restart Claude Code, run `/mcp` — `peek` should appear with two tools.
 
-If you prefer to manage your MCP config yourself, run `sudo ./dist/peek-mcp install --skip-claude-config` (or pass `--skip-claude-config` through your installer invocation) and add the block above by hand.
+If you prefer to manage your MCP config yourself, run `sudo ./dist/Peek.app/Contents/MacOS/peek-mcp install --skip-claude-config` (or pass `--skip-claude-config` through your installer invocation) and add the block above by hand.
 
 Any other MCP-speaking client works the same way: point its stdio command at `~/.local/bin/peek-mcp` (the symlink that resolves to `/Applications/Peek.app/Contents/MacOS/peek-mcp` — TCC follows the symlink and applies the bundle's grant correctly).
 
@@ -131,7 +131,7 @@ Claude Code  ──stdio JSON-RPC──▶  ~/.local/bin/peek-mcp  (symlink)
 
 Every blocking AX call runs on a bounded `ThreadPoolExecutor` so concurrent MCP requests don't stall on each other. Per-window deadline (default 3s) is enforced via `asyncio.wait_for`; on timeout, the call returns partial results with `truncated_at_time_limit=True`.
 
-The binary is built with PyInstaller (`--onefile`) and wrapped in a `Peek.app` bundle ad-hoc-codesigned with bundle ID `com.richardwei6.macos-peek-mcp`. AX trust attaches at the kernel cdhash + bundle ID level — no Python interpreter is exposed to TCC, and the `.app` form is what the modern macOS Accessibility pane natively recognizes.
+The binary is built with PyInstaller (`--onedir`) and wrapped in a `Peek.app` bundle ad-hoc-codesigned with bundle ID `com.richardwei6.macos-peek-mcp`. AX trust attaches at the kernel cdhash + bundle ID level — no Python interpreter is exposed to TCC, and the `.app` form is what the modern macOS Accessibility pane natively recognizes. `--onedir` (not `--onefile`) is intentional: the running binary is `/Applications/Peek.app/Contents/MacOS/peek-mcp` directly, with no `/var/folders/.../_MEIxxxxx/` self-extraction step that would break TCC's bundle-context match on Sonoma 14.4+ and Sequoia.
 
 ## Threat model
 
@@ -205,13 +205,13 @@ uv tool uninstall macos-peek-mcp 2>/dev/null || true
 ## Troubleshooting
 
 **`peek-mcp doctor` says AX trust drift detected.**
-The bundle's binary was replaced — usually because you re-ran `./build.sh && sudo ./dist/peek-mcp install`. Open *System Settings → Privacy & Security → Accessibility*, remove the old `Peek` entry, drag `/Applications/Peek.app` back in (or click + and select it from Applications), re-run `peek-mcp doctor`.
+The bundle's binary was replaced — usually because you re-ran `./build.sh && sudo ./dist/Peek.app/Contents/MacOS/peek-mcp install`. Open *System Settings → Privacy & Security → Accessibility*, remove the old `Peek` entry, drag `/Applications/Peek.app` back in (or click + and select it from Applications), re-run `peek-mcp doctor`.
 
 **`Peek.app` doesn't show up when I click + in Accessibility.**
 The bundle wasn't installed to a location System Settings searches. Verify `/Applications/Peek.app` exists, then drag it directly into the Accessibility list (the `+` picker also accepts a drag).
 
 **`read_window` returns `ax_permission_denied` even though I granted trust.**
-You probably granted trust to a different copy of Peek.app, or to the raw `dist/peek-mcp` binary instead of the bundle. `peek-mcp doctor` prints the bundle binary it sees — that's the one TCC is checking. Re-grant the bundle at `/Applications/Peek.app`.
+You probably granted trust to a different copy of Peek.app. `peek-mcp doctor` prints the bundle binary it sees — that's the one TCC is checking. Re-grant the bundle at `/Applications/Peek.app`.
 
 **Symbol load failure: `_AXUIElementGetWindow not found`.**
 Logged at startup; falls back to title+bounds matching. Window-ID selectors may return `ambiguous_window`. The private SPI has been stable for 15+ years (Hammerspoon, yabai, AltTab use it) so this should not happen on a normal macOS install — file an issue with `uname -a`.
@@ -241,8 +241,8 @@ uv sync --group dev
 uv run pytest tests/                  # unit tests (62, no AX needed)
 uv run pytest tests/ -m integration   # AX-required (local only)
 
-./build.sh                            # build + ad-hoc sign dist/Peek.app and dist/peek-mcp
-sudo ./dist/peek-mcp install          # install Peek.app + ~/.local/bin/peek-mcp symlink
+./build.sh                                              # build + ad-hoc sign dist/Peek.app
+sudo ./dist/Peek.app/Contents/MacOS/peek-mcp install    # install Peek.app + ~/.local/bin/peek-mcp symlink
 ```
 
 Layout:
