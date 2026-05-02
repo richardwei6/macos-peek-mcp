@@ -176,6 +176,28 @@ A typo or unreadable user file falls back to the bundled default — never to an
 
 `list_windows` exposes `sensitive: bool` per window so the agent can warn you before requesting an override.
 
+## Uninstall
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/richardwei6/macos-peek-mcp/main/uninstall.sh | bash
+```
+
+Removes `/Applications/Peek.app` (one sudo prompt), the `~/.local/bin/peek-mcp` symlink, the `~/.local/share/macos-peek-mcp` source clone, the `~/.config/peek-mcp` state/denylist directory, and the `uv tool` entry if registered.
+
+Or by hand:
+
+```bash
+sudo rm -rf /Applications/Peek.app
+rm -f  ~/.local/bin/peek-mcp
+rm -rf ~/.local/share/macos-peek-mcp
+rm -rf ~/.config/peek-mcp
+uv tool uninstall macos-peek-mcp 2>/dev/null || true
+```
+
+**Manual cleanup** (TCC has no CLI for revoking grants): open *System Settings → Privacy & Security → Accessibility*, select `Peek`, click **−** to revoke. The script reminds you of this at the end.
+
+If you added a `peek` block to `~/.claude.json` (or another MCP client config), remove it yourself — the uninstaller does not touch client config.
+
 ## Troubleshooting
 
 **`peek-mcp doctor` says AX trust drift detected.**
