@@ -37,6 +37,8 @@ You'll see one `sudo` prompt — writing to `/Applications/` requires it. The bu
 
 The installer clones the repo to `~/.local/share/macos-peek-mcp/src`, builds the `Peek.app` bundle (and a raw `dist/peek-mcp` Mach-O for dev use) with PyInstaller (~1–2 min on first run), ad-hoc-codesigns both, installs the bundle to `/Applications/Peek.app`, and creates a CLI symlink at `~/.local/bin/peek-mcp` that resolves to the bundle's binary. Re-running updates the source and rebuilds.
 
+The installer also adds a `peek` entry to `~/.claude.json` automatically — opt out with `--skip-claude-config` if you manage your MCP config yourself.
+
 If you'd rather inspect the script before piping to bash:
 
 ```bash
@@ -70,7 +72,7 @@ Re-run `peek-mcp doctor` after granting access. It should report `AX trust: GRAN
 
 ## Claude Code config
 
-Add to `~/.claude.json` (or your project's `.mcp.json`):
+The installer adds this for you. The block written to `~/.claude.json` looks like:
 
 ```jsonc
 {
@@ -83,6 +85,8 @@ Add to `~/.claude.json` (or your project's `.mcp.json`):
 ```
 
 Restart Claude Code, run `/mcp` — `peek` should appear with two tools.
+
+If you prefer to manage your MCP config yourself, run `sudo ./dist/peek-mcp install --skip-claude-config` (or pass `--skip-claude-config` through your installer invocation) and add the block above by hand.
 
 Any other MCP-speaking client works the same way: point its stdio command at `~/.local/bin/peek-mcp` (the symlink that resolves to `/Applications/Peek.app/Contents/MacOS/peek-mcp` — TCC follows the symlink and applies the bundle's grant correctly).
 
@@ -196,7 +200,7 @@ uv tool uninstall macos-peek-mcp 2>/dev/null || true
 
 **Manual cleanup** (TCC has no CLI for revoking grants): open *System Settings → Privacy & Security → Accessibility*, select `Peek`, click **−** to revoke. The script reminds you of this at the end.
 
-If you added a `peek` block to `~/.claude.json` (or another MCP client config), remove it yourself — the uninstaller does not touch client config.
+- If you used the auto-config, the `peek` entry remains in `~/.claude.json` — remove it yourself. The uninstaller does not touch client config (asymmetric on purpose; safer).
 
 ## Troubleshooting
 
