@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import pwd
 import shutil
@@ -22,6 +23,8 @@ from peek.permissions import (
     APP_BUNDLE_PATH,
     BUNDLE_BINARY_PATH,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _user_home() -> Path:
@@ -70,6 +73,77 @@ def _ensure_dir_owned_by_user(path: Path, owner: tuple[int, int] | None) -> None
                 os.chown(d, owner[0], owner[1])
             except OSError:
                 pass  # best-effort
+
+
+def _claude_config_path() -> Path:
+    """Return the path to the invoking user's ``~/.claude.json``."""
+    return _user_home() / ".claude.json"
+
+
+def _add_peek_to_claude_config(symlink_path: Path) -> str:
+    """Add or update the peek MCP server entry in ~/.claude.json.
+
+    Returns one of:
+      'created'           file did not exist; created with peek entry
+      'added'             file existed; mcpServers.peek added
+      'updated'           file existed; mcpServers.peek command path updated
+      'unchanged'         file existed; peek already at the desired path
+      'malformed_skipped' file existed but was not valid JSON / not an object;
+                          left untouched, caller prints manual instructions
+    """
+    config_path = _claude_config_path()
+    desired = {"command": str(symlink_path)}
+
+    if config_path.exists():
+        try:
+            raw = config_path.read_text()
+            data = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError as exc:
+            logger.warning("%s has invalid JSON (%s); not modified", config_path, exc)
+            return "malformed_skipped"
+        existed = True
+    else:
+        data = {}
+        existed = False
+
+    if not isinstance(data, dict):
+        logger.warning("%s root is not a JSON object; not modified", config_path)
+        return "malformed_skipped"
+
+    mcp_servers = data.get("mcpServers")
+    if mcp_servers is None:
+        mcp_servers = {}
+        data["mcpServers"] = mcp_servers
+    elif not isinstance(mcp_servers, dict):
+        logger.warning("%s mcpServers is not an object; not modified", config_path)
+        return "malformed_skipped"
+
+    existing = mcp_servers.get("peek")
+    if existing == desired:
+        return "unchanged"
+
+    if "peek" in mcp_servers:
+        status = "updated"
+    elif existed:
+        status = "added"
+    else:
+        status = "created"
+
+    mcp_servers["peek"] = desired
+
+    # atomic write
+    tmp = config_path.with_suffix(config_path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    tmp.replace(config_path)
+
+    owner = _user_uid_gid()
+    if owner is not None:
+        try:
+            os.chown(config_path, owner[0], owner[1])
+        except OSError:
+            pass
+
+    return status
 
 
 def _display(p: Path) -> str:
@@ -390,12 +464,39 @@ def cmd_install(args: argparse.Namespace) -> int:
             pass  # best-effort
     print(f"symlink:   {cli_symlink} -> {target_binary}")
 
+    # Auto-configure ~/.claude.json with the peek MCP entry, unless the
+    # user opted out. The CLI symlink path is what we register: it
+    # resolves to the bundle binary, so TCC follows it correctly.
+    config_status = "skipped"
+    config_path = _claude_config_path()
+    if not getattr(args, "skip_claude_config", False):
+        config_status = _add_peek_to_claude_config(cli_symlink)
+        if config_status in ("created", "added"):
+            print(f"{_display(config_path)}: added peek MCP server entry")
+        elif config_status == "updated":
+            print(f"{_display(config_path)}: updated peek command path")
+        elif config_status == "unchanged":
+            print(f"{_display(config_path)}: peek already configured")
+        elif config_status == "malformed_skipped":
+            print(
+                f"{_display(config_path)} has invalid JSON; could not auto-configure peek.",
+                file=sys.stderr,
+            )
+            print('Add this block manually under "mcpServers":', file=sys.stderr)
+            print(f'    "peek": {{ "command": "{cli_symlink}" }}', file=sys.stderr)
+
     print()
     print("Next steps:")
     print("  1. Open System Settings -> Privacy & Security -> Accessibility.")
     print(f"  2. Click + and select Peek.app from Applications (or drag {target_bundle} in).")
     print("  3. Enable the toggle.")
     print("  4. Run: peek-mcp doctor")
+    print("  5. Restart Claude Code, run /mcp -- peek should appear with two tools.")
+    if config_status == "malformed_skipped":
+        print(
+            f"     (Reminder: {_display(config_path)} had invalid JSON; "
+            "add the peek block manually as shown above.)"
+        )
     return 0
 
 
@@ -446,6 +547,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_install.add_argument(
         "--path",
         help=f"Override .app install location (default {APP_BUNDLE_PATH})",
+    )
+    p_install.add_argument(
+        "--skip-claude-config",
+        action="store_true",
+        help="Don't touch ~/.claude.json (advanced; default is to auto-add the peek MCP entry)",
     )
     p_install.set_defaults(func=cmd_install)
 
